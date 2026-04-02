@@ -699,101 +699,110 @@ p_bi_ci_clean    <- make_biplot(pca_ci_clean,
                     plot.caption = element_text(size = 7.5, colour = "grey50"))
   )
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — ASSUMPTION TESTING: MULTIVARIATE NORMALITY (MARDIA'S TEST)
 # ═══════════════════════════════════════════════════════════════════════════════
-# Required for FA (assumes MVN of common factors) and to assess whether PCA
-# covariance-based inference is appropriate.
 # install.packages("MVN") if not yet installed
 library(MVN)
 
-# ── Helper: run Mardia's test and return a tidy summary tibble ────────────────
-run_mardia <- function(data, cols, label) {
-  X   <- as.matrix(data[, cols])
-  res <- mvn(X, mvnTest = "mardia", desc = FALSE)$multivariateNormality
-  
-  tibble(
-    dataset   = label,
-    test      = res$Test,
-    statistic = round(as.numeric(res$`Test Statistic`), 3),
-    p_value   = round(as.numeric(res$`p value`), 4),
-    result    = res$Result
-  )
-}
+# Mardia's skewness is O(n^2) — subsample to 1000 obs to keep it tractable.
+# Results are stable at n=1000 for detecting non-normality at this scale.
+set.seed(437)
+N_MARDIA <- 1000
 
 # ── 4a. Mardia's test — all four dataset/feature combinations ─────────────────
-mardia_results <- bind_rows(
-  run_mardia(df,              photo_cols, "Raw bands — full"),
-  run_mardia(df_bands_no_out, photo_cols, "Raw bands — outliers removed"),
-  run_mardia(df_ci,           ci_cols,    "Color indices — full"),
-  run_mardia(df_ci_no_out,    ci_cols,    "Color indices — outliers removed")
-)
+cat("\n--- Raw bands: full dataset ---\n")
+mvn(as.matrix(df[sample(nrow(df), N_MARDIA), photo_cols]),
+    mvnTest = "mardia", desc = FALSE)
 
-cat("\n--- Mardia's MVN test results ---\n")
-print(mardia_results, n = Inf)
+cat("\n--- Raw bands: outliers removed ---\n")
+mvn(as.matrix(df_bands_no_out[sample(nrow(df_bands_no_out), N_MARDIA), photo_cols]),
+    mvnTest = "mardia", desc = FALSE)
+
+cat("\n--- Color indices: full dataset ---\n")
+mvn(as.matrix(df_ci[sample(nrow(df_ci), N_MARDIA), ci_cols]),
+    mvnTest = "mardia", desc = FALSE)
+
+cat("\n--- Color indices: outliers removed ---\n")
+mvn(as.matrix(df_ci_no_out[sample(nrow(df_ci_no_out), N_MARDIA), ci_cols]),
+    mvnTest = "mardia", desc = FALSE)
 
 # ── 4b. Mardia's test — within each class (outliers removed) ─────────────────
-cat("\n--- Mardia's test by class: raw bands (outliers removed) ---\n")
-mardia_bands_class <- bind_rows(lapply(class_order, function(cls) {
-  run_mardia(filter(df_bands_no_out, class == cls), photo_cols,
-             paste0("Raw bands — ", cls))
-}))
-print(mardia_bands_class, n = Inf)
+# QSO has 850 obs after cleaning — use min(N_MARDIA, nrow(.)) for small classes
 
-cat("\n--- Mardia's test by class: color indices (outliers removed) ---\n")
-mardia_ci_class <- bind_rows(lapply(class_order, function(cls) {
-  run_mardia(filter(df_ci_no_out, class == cls), ci_cols,
-             paste0("Color indices — ", cls))
-}))
-print(mardia_ci_class, n = Inf)
+cat("\n--- Raw bands: GALAXY ---\n")
+df_tmp <- filter(df_bands_no_out, class == "GALAXY")
+mvn(as.matrix(df_tmp[sample(nrow(df_tmp), min(N_MARDIA, nrow(df_tmp))), photo_cols]),
+    mvnTest = "mardia", desc = FALSE)
 
-# ── 4c. Chi-squared QQ plots — visual MVN check ───────────────────────────────
-# Squared Mahalanobis distances should follow chi-sq(p) under MVN.
-# Deviations from the diagonal indicate heavy tails or skewness.
-make_mvn_qq <- function(data, cols, label) {
-  X   <- scale(as.matrix(data[, cols]))
-  p   <- ncol(X)
-  n   <- nrow(X)
-  d2  <- mahalanobis(X, center = rep(0, p), cov = cov(X))
-  probs <- (seq_len(n) - 0.5) / n
-  
-  tibble(
-    empirical   = sort(d2),
-    theoretical = qchisq(probs, df = p),
-    label       = label
-  )
+cat("\n--- Raw bands: STAR ---\n")
+df_tmp <- filter(df_bands_no_out, class == "STAR")
+mvn(as.matrix(df_tmp[sample(nrow(df_tmp), min(N_MARDIA, nrow(df_tmp))), photo_cols]),
+    mvnTest = "mardia", desc = FALSE)
+
+cat("\n--- Raw bands: QSO ---\n")
+df_tmp <- filter(df_bands_no_out, class == "QSO")
+mvn(as.matrix(df_tmp[sample(nrow(df_tmp), min(N_MARDIA, nrow(df_tmp))), photo_cols]),
+    mvnTest = "mardia", desc = FALSE)
+
+cat("\n--- Color indices: GALAXY ---\n")
+df_tmp <- filter(df_ci_no_out, class == "GALAXY")
+mvn(as.matrix(df_tmp[sample(nrow(df_tmp), min(N_MARDIA, nrow(df_tmp))), ci_cols]),
+    mvnTest = "mardia", desc = FALSE)
+
+cat("\n--- Color indices: STAR ---\n")
+df_tmp <- filter(df_ci_no_out, class == "STAR")
+mvn(as.matrix(df_tmp[sample(nrow(df_tmp), min(N_MARDIA, nrow(df_tmp))), ci_cols]),
+    mvnTest = "mardia", desc = FALSE)
+
+cat("\n--- Color indices: QSO ---\n")
+df_tmp <- filter(df_ci_no_out, class == "QSO")
+mvn(as.matrix(df_tmp[sample(nrow(df_tmp), min(N_MARDIA, nrow(df_tmp))), ci_cols]),
+    mvnTest = "mardia", desc = FALSE)
+
+# ── 4c. Negentropy — practical non-Gaussianity measure ───────────────────────
+# Negentropy J(x) >= 0, with J=0 iff x is Gaussian. Unlike Mardia's test,
+# not inflated by large n — measures effect size of non-normality per variable.
+# Approximation via Hyvarinen (1998): J(x) ~ [E{G(x)} - E{G(v)}]^2
+# where G(u) = log(cosh(u)) and v ~ N(0,1).
+
+set.seed(437)
+v   <- rnorm(100000)
+EGv <- mean(log(cosh(v)))
+
+negentropy_vars <- function(data, cols, label) {
+  X <- scale(as.matrix(data[, cols]))
+  neg <- sapply(cols, function(col) {
+    s   <- X[, col]
+    EGs <- mean(log(cosh(s)))
+    round((EGs - EGv)^2, 6)
+  })
+  tibble(dataset = label, variable = cols, negentropy = neg)
 }
 
-qq_data <- bind_rows(
-  make_mvn_qq(df,              photo_cols, "Raw bands — full"),
-  make_mvn_qq(df_bands_no_out, photo_cols, "Raw bands — outliers removed"),
-  make_mvn_qq(df_ci,           ci_cols,    "Color indices — full"),
-  make_mvn_qq(df_ci_no_out,    ci_cols,    "Color indices — outliers removed")
-) %>%
-  mutate(label = factor(label, levels = c(
-    "Raw bands — full",
-    "Raw bands — outliers removed",
-    "Color indices — full",
-    "Color indices — outliers removed"
-  )))
+# ── 4d. Negentropy — all four dataset/feature combinations ───────────────────
+neg_results <- bind_rows(
+  negentropy_vars(df,              photo_cols, "Raw bands — full"),
+  negentropy_vars(df_bands_no_out, photo_cols, "Raw bands — outliers removed"),
+  negentropy_vars(df_ci,           ci_cols,    "Color indices — full"),
+  negentropy_vars(df_ci_no_out,    ci_cols,    "Color indices — outliers removed")
+)
 
-ggplot(qq_data, aes(x = theoretical, y = empirical)) +
-  geom_point(alpha = 0.3, size = 0.6, color = "grey40") +
-  geom_abline(slope = 1, intercept = 0,
-              linetype = "dashed", linewidth = 0.5, color = "#B2182B") +
-  facet_wrap(~ label, ncol = 2, scales = "free") +
-  labs(
-    x       = "Theoretical chi-squared quantiles",
-    y       = "Squared Mahalanobis distances",
-    title   = "Chi-squared QQ plots: multivariate normality check",
-    caption = paste0("Points on the red line indicate MVN  |  ",
-                     "Upward deviation in tails = heavy-tailed distribution")
-  ) +
-  theme_minimal(base_size = 10) +
-  theme(
-    strip.text       = element_text(size = 9),
-    panel.grid.minor = element_blank(),
-    axis.text        = element_text(size = 8, colour = "grey50"),
-    plot.caption     = element_text(size = 7.5, colour = "grey50"),
-    plot.title       = element_text(size = 11)
-  )
+cat("\n--- Negentropy per variable (0 = Gaussian, higher = more non-Gaussian) ---\n")
+print(neg_results %>% pivot_wider(names_from = variable, values_from = negentropy),
+      n = Inf)
+
+# ── 4e. Negentropy — within each class (outliers removed) ────────────────────
+neg_class <- bind_rows(
+  negentropy_vars(filter(df_bands_no_out, class == "GALAXY"), photo_cols, "Raw bands — GALAXY"),
+  negentropy_vars(filter(df_bands_no_out, class == "STAR"),   photo_cols, "Raw bands — STAR"),
+  negentropy_vars(filter(df_bands_no_out, class == "QSO"),    photo_cols, "Raw bands — QSO"),
+  negentropy_vars(filter(df_ci_no_out,    class == "GALAXY"), ci_cols,    "Color indices — GALAXY"),
+  negentropy_vars(filter(df_ci_no_out,    class == "STAR"),   ci_cols,    "Color indices — STAR"),
+  negentropy_vars(filter(df_ci_no_out,    class == "QSO"),    ci_cols,    "Color indices — QSO")
+)
+
+cat("\n--- Negentropy per variable by class ---\n")
+print(neg_class %>% pivot_wider(names_from = variable, values_from = negentropy),
+      n = Inf)
