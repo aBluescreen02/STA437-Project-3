@@ -3,6 +3,9 @@ library(ggcorrplot)
 library(patchwork)
 library(tidyverse)
 library(robustbase)
+#library(MVN)
+library(psych)
+library(cowplot)
 
 # ── Data loading ──────────────────────────────────────────────────────────────
 df <- read.csv('sdss_data.csv')
@@ -154,11 +157,11 @@ summarise_outliers <- function(dd_typed, label) {
 
 # ── 1a. Histograms ────────────────────────────────────────────────────────────
 band_labels <- c(
-  u = "u band (ultraviolet, ~354 nm)",
-  g = "g band (green, ~477 nm)",
-  r = "r band (red, ~623 nm)",
-  i = "i band (near-infrared, ~763 nm)",
-  z = "z band (infrared, ~913 nm)"
+  u = "u band (~354 nm)",
+  g = "g band (~477 nm)",
+  r = "r band (~623 nm)",
+  i = "i band (~763 nm)",
+  z = "z band (~913 nm)"
 )
 
 df_bands_long <- df %>%
@@ -171,57 +174,140 @@ df_bands_long <- df %>%
     class = factor(class, levels = class_order, labels = n_labels)
   )
 
-ggplot(df_bands_long, aes(x = magnitude, fill = class, color = class)) +
+p_bands_hist <- ggplot(df_bands_long,
+                       aes(x = magnitude, fill = class, color = class)) +
   geom_histogram(bins = 40, position = "identity",
                  alpha = 0.45, linewidth = 0.3) +
   scale_fill_manual(values  = setNames(class_colors, n_labels)) +
   scale_color_manual(values = setNames(class_colors, n_labels)) +
-  facet_wrap(~ band, ncol = 2, scales = "free") +
-  labs(x = "Magnitude (AB system)", y = "Count", fill = NULL, color = NULL) +
-  theme_minimal(base_size = 11) +
+  facet_wrap(~ band, ncol = 1, scales = "free") +
+  labs(x = "Magnitude (AB system)", y = "Count",
+       fill = NULL, color = NULL,
+       title = "Distributions") +
+  theme_minimal(base_size = 9) +
   theme(
-    legend.position  = "top",
-    legend.key.size  = unit(0.5, "cm"),
-    strip.text       = element_text(size = 9),
+    legend.position  = "none",
+    strip.text       = element_text(size = 8),
     panel.grid.minor = element_blank(),
     panel.grid.major = element_line(colour = "grey92"),
-    axis.text        = element_text(size = 8, colour = "grey50"),
-    axis.title       = element_text(size = 9, colour = "grey40"),
-    legend.text      = element_text(size = 9),
-    plot.margin      = margin(10, 10, 10, 10)
+    axis.text        = element_text(size = 7, colour = "grey50"),
+    axis.title       = element_text(size = 8, colour = "grey40"),
+    plot.title       = element_text(size = 9, face = "plain"),
+    plot.margin      = margin(4, 4, 4, 4)
   )
 
 # ── 1b. Correlation heatmaps (raw bands) ──────────────────────────────────────
 make_corrplot_bands <- function(data, title, n = NULL) {
   R     <- cor(data[, photo_cols])
-  label <- if (!is.null(n)) paste0(title, " (n = ", scales::comma(n), ")") else title
+  label <- if (!is.null(n)) paste0(title, "\n(n=", scales::comma(n), ")") else title
   ggcorrplot(R,
              method   = "square",
              type     = "full",
              lab      = TRUE,
-             lab_size = 3,
+             lab_size = 2.5,
              colors   = c("#2166AC", "#F7F7F7", "#B2182B"),
              title    = label,
-             ggtheme  = theme_minimal(base_size = 10)) +
-    theme(plot.title      = element_text(size = 10, hjust = 0.5),
+             ggtheme  = theme_minimal(base_size = 9)) +
+    theme(plot.title      = element_text(size = 8, hjust = 0.5),
           legend.position = "none",
-          axis.text       = element_text(size = 9))
+          axis.text       = element_text(size = 7),
+          plot.margin     = margin(2, 2, 2, 2))
 }
 
-p_bands_all  <- make_corrplot_bands(df,                            "All objects", nrow(df))
-p_bands_gal  <- make_corrplot_bands(filter(df, class == "GALAXY"), "Galaxy",      sum(df$class == "GALAXY"))
-p_bands_star <- make_corrplot_bands(filter(df, class == "STAR"),   "Star",        sum(df$class == "STAR"))
-p_bands_qso  <- make_corrplot_bands(filter(df, class == "QSO"),    "QSO",         sum(df$class == "QSO"))
+p_bands_all  <- make_corrplot_bands(df,                            "All",    nrow(df))
+p_bands_gal  <- make_corrplot_bands(filter(df, class == "GALAXY"), "Galaxy", sum(df$class == "GALAXY"))
+p_bands_star <- make_corrplot_bands(filter(df, class == "STAR"),   "Star",   sum(df$class == "STAR"))
+p_bands_qso  <- make_corrplot_bands(filter(df, class == "QSO"),    "QSO",    sum(df$class == "QSO"))
 
-(p_bands_all | plot_spacer()) / (p_bands_gal | p_bands_star | p_bands_qso) +
-  plot_annotation(
-    title   = "Photometric band correlations — overall vs. by class",
-    caption = "Simpson's paradox check: compare overall correlations to within-class correlations",
-    theme   = theme(plot.title   = element_text(size = 12, face = "plain"),
-                    plot.caption = element_text(size = 8, colour = "grey50"))
-  )
+p_bands_corr <- (p_bands_all  | p_bands_gal) /
+  (p_bands_star | p_bands_qso) +
+  plot_annotation(title = "B",
+                  theme = theme(plot.title = element_text(size = 11,
+                                                          face  = "bold",
+                                                          hjust = 0)))
 
-# ── 1c. D-D plot: raw bands — pooled (reference) ─────────────────────────────
+# ── 1c. Shared legend: class swatches + correlation colour bar ────────────────
+p_class_legend <- ggplot(
+  tibble(class = factor(n_labels, levels = n_labels),
+         x = 1, y = seq_along(n_labels)),
+  aes(x = x, y = y, fill = class, color = class)
+) +
+  geom_point(shape = 21, size = 4, stroke = 0.8) +
+  scale_fill_manual(values  = setNames(class_colors, n_labels),
+                    labels  = n_labels) +
+  scale_color_manual(values = setNames(class_colors, n_labels),
+                     labels = n_labels) +
+  guides(fill  = guide_legend(override.aes = list(size = 4, alpha = 0.6),
+                              ncol = 1, title = "Class"),
+         color = "none") +
+  labs(fill = NULL) +
+  theme_void() +
+  theme(legend.position   = "right",
+        legend.title      = element_text(size = 9, face = "bold"),
+        legend.text       = element_text(size = 8),
+        legend.key.size   = unit(0.45, "cm"),
+        legend.margin     = margin(0, 0, 0, 0),
+        legend.box.margin = margin(0, 0, 0, 0))
+
+p_corr_legend <- ggplot(
+  data.frame(x = 1, y = 1, z = 0),
+  aes(x = x, y = y, fill = z)
+) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low      = "#2166AC",
+    mid      = "#F7F7F7",
+    high     = "#B2182B",
+    midpoint = 0,
+    limits   = c(-1, 1),
+    name     = "Correlation",
+    guide    = guide_colorbar(
+      title.position = "top",
+      title.hjust    = 0.5,
+      barwidth       = unit(0.4, "cm"),
+      barheight      = unit(2.5, "cm"),
+      ticks          = TRUE,
+      label          = TRUE
+    )
+  ) +
+  theme_void() +
+  theme(legend.position   = "right",
+        legend.title      = element_text(size = 9, face = "bold"),
+        legend.text       = element_text(size = 8),
+        legend.margin     = margin(0, 0, 0, 0),
+        legend.box.margin = margin(0, 0, 0, 0))
+
+p_leg_class <- get_legend(p_class_legend)
+p_leg_corr  <- get_legend(p_corr_legend)
+
+p_legend_combined <- plot_grid(
+  p_leg_class,
+  p_leg_corr,
+  ncol        = 1,
+  rel_heights = c(0.55, 0.45),
+  align       = "v"
+)
+
+# ── 1d. Combined layout ───────────────────────────────────────────────────────
+p_bands_hist_labelled <- ggdraw() +
+  draw_plot(p_bands_hist) +
+  draw_label("A", x = 0.01, y = 0.99,
+             hjust = 0, vjust = 1,
+             fontface = "bold", size = 11)
+
+p_bands_combined <- plot_grid(
+  p_legend_combined,
+  p_bands_hist_labelled,
+  p_bands_corr,
+  nrow       = 1,
+  rel_widths = c(0.2, 0.42, 0.58),
+  align      = "h",
+  axis       = "tb"
+)
+
+plot_grid(p_bands_combined, ncol = 1)
+
+# ── 1e. D-D plot: raw bands — pooled (reference) ─────────────────────────────
 p_bands      <- ncol(X_bands)
 cutoff_bands <- sqrt(qchisq(0.975, df = p_bands))
 
@@ -247,16 +333,13 @@ cat(sprintf("[Bands pooled] Outliers (true + masked): %d / %d (%.1f%%)\n",
             sum(dd_bands_pooled_typed$outlier), nrow(dd_bands_pooled_typed),
             100 * mean(dd_bands_pooled_typed$outlier)))
 
-# ── 1d. D-D plots: raw bands — within-class MCD ──────────────────────────────
+# ── 1f. D-D plots: raw bands — within-class MCD ──────────────────────────────
 dd_bands_typed <- map_dfr(class_order, function(cls) {
   idx  <- which(df$class == cls)
   Xsub <- X_bands[idx, ]
-  
   d_cl <- sqrt(mahalanobis(Xsub, center = colMeans(Xsub), cov = cov(Xsub)))
-  
   mcd  <- covMcd(Xsub, alpha = 0.95)
   d_ro <- sqrt(mahalanobis(Xsub, center = mcd$center, cov = mcd$cov))
-  
   tibble(classical = d_cl, robust = d_ro, class = cls, row_idx = idx)
 }) %>%
   get_outlier_flags(cutoff_bands)
@@ -302,13 +385,18 @@ p_ci_hist <- ggplot(df_ci_long, aes(x = value, fill = class, color = class)) +
                  alpha = 0.42, linewidth = 0.3) +
   scale_fill_manual(values  = class_colors) +
   scale_color_manual(values = class_colors) +
-  facet_wrap(~ index, ncol = 2, scales = "free") +
-  labs(x = "Color index (mag)", y = "Count", fill = NULL, color = NULL) +
-  theme_minimal(base_size = 10) +
-  theme(legend.position  = "top",
-        strip.text       = element_text(size = 9),
+  facet_wrap(~ index, ncol = 1, scales = "free") +
+  labs(x = "Color index (mag)", y = "Count",
+       fill = NULL, color = NULL,
+       title = "A") +
+  theme_minimal(base_size = 9) +
+  theme(legend.position  = "none",
+        strip.text       = element_text(size = 8),
         panel.grid.minor = element_blank(),
-        axis.text        = element_text(size = 8, colour = "grey50"))
+        axis.text        = element_text(size = 7, colour = "grey50"),
+        axis.title       = element_text(size = 8, colour = "grey40"),
+        plot.title       = element_text(size = 11, face = "bold", hjust = 0),
+        plot.margin      = margin(4, 4, 4, 4))
 
 # ── 2b. Correlation heatmaps (color indices) ──────────────────────────────────
 make_corrplot_ci <- function(data, title) {
@@ -317,27 +405,39 @@ make_corrplot_ci <- function(data, title) {
              method   = "square",
              type     = "full",
              lab      = TRUE,
-             lab_size = 3,
+             lab_size = 2.5,
              colors   = c("#2166AC", "#F7F7F7", "#B2182B"),
              title    = title,
              ggtheme  = theme_minimal(base_size = 9)) +
-    theme(plot.title      = element_text(size = 9, hjust = 0.5),
+    theme(plot.title      = element_text(size = 8, hjust = 0.5),
           legend.position = "none",
-          axis.text       = element_text(size = 8))
+          axis.text       = element_text(size = 7),
+          plot.margin     = margin(2, 2, 2, 2))
 }
 
-p_ci_all  <- make_corrplot_ci(df_ci,                            "All objects")
-p_ci_gal  <- make_corrplot_ci(filter(df_ci, class == "GALAXY"), "Galaxy")
-p_ci_star <- make_corrplot_ci(filter(df_ci, class == "STAR"),   "Star")
-p_ci_qso  <- make_corrplot_ci(filter(df_ci, class == "QSO"),    "QSO")
+p_ci_all  <- make_corrplot_ci(df_ci,                            "All\n(n=10,000)")
+p_ci_gal  <- make_corrplot_ci(filter(df_ci, class == "GALAXY"), "Galaxy\n(n=4,998)")
+p_ci_star <- make_corrplot_ci(filter(df_ci, class == "STAR"),   "Star\n(n=4,152)")
+p_ci_qso  <- make_corrplot_ci(filter(df_ci, class == "QSO"),    "QSO\n(n=850)")
 
-p_ci_corr <- (p_ci_all | plot_spacer()) / (p_ci_gal | p_ci_star | p_ci_qso) +
-  plot_annotation(
-    title = "Color index correlations — overall vs. by class",
-    theme = theme(plot.title = element_text(size = 11))
-  )
+p_ci_corr <- (p_ci_all  | p_ci_gal) /
+  (p_ci_star | p_ci_qso) +
+  plot_annotation(title = "B",
+                  theme = theme(plot.title = element_text(size = 11,
+                                                          face  = "bold",
+                                                          hjust = 0)))
 
-p_ci_hist / p_ci_corr + plot_layout(heights = c(1, 1.2))
+p_ci_combined <- plot_grid(
+  p_legend_combined,
+  p_ci_hist,
+  p_ci_corr,
+  nrow       = 1,
+  rel_widths = c(0.2, 0.42, 0.58),
+  align      = "h",
+  axis       = "tb"
+)
+
+plot_grid(p_ci_combined, ncol = 1)
 
 # ── 2c. D-D plot: color indices — pooled (reference) ─────────────────────────
 p_ci      <- ncol(X_ci)
@@ -369,12 +469,9 @@ cat(sprintf("[CI pooled] Outliers (true + masked): %d / %d (%.1f%%)\n",
 dd_ci_typed <- map_dfr(class_order, function(cls) {
   idx  <- which(df_ci$class == cls)
   Xsub <- X_ci[idx, ]
-  
   d_cl <- sqrt(mahalanobis(Xsub, center = colMeans(Xsub), cov = cov(Xsub)))
-  
   mcd  <- covMcd(Xsub, alpha = 0.95)
   d_ro <- sqrt(mahalanobis(Xsub, center = mcd$center, cov = mcd$cov))
-  
   tibble(classical = d_cl, robust = d_ro, class = cls, row_idx = idx)
 }) %>%
   get_outlier_flags(cutoff_ci)
@@ -415,7 +512,7 @@ bind_rows(
          outliers, total, pct) %>%
   print(n = Inf)
 
-# ── Carry forward clean datasets for downstream analysis ──────────────────────
+# ── Carry forward clean datasets (standard 95% MCD) ──────────────────────────
 bands_flags <- dd_bands_typed %>%
   select(row_idx, outlier_type, outlier, d_classical = classical, d_robust = robust) %>%
   arrange(row_idx)
@@ -437,8 +534,64 @@ df_ci_clean     <- df_ci %>%
 df_bands_no_out <- filter(df_bands_clean, !outlier)
 df_ci_no_out    <- filter(df_ci_clean,    !outlier)
 
-cat(sprintf("Bands — clean n: %d  |  CI — clean n: %d\n",
+cat(sprintf("Standard (95%%) — Bands n: %d  |  CI n: %d\n",
             nrow(df_bands_no_out), nrow(df_ci_no_out)))
+
+# ── Sensitivity check: extreme-only outlier removal (99.7% MCD) ───────────────
+cutoff_bands_extreme <- sqrt(qchisq(0.9985, df = p_bands))
+cutoff_ci_extreme    <- sqrt(qchisq(0.9985, df = p_ci))
+
+dd_bands_extreme <- map_dfr(class_order, function(cls) {
+  idx  <- which(df$class == cls)
+  Xsub <- X_bands[idx, ]
+  d_cl <- sqrt(mahalanobis(Xsub, center = colMeans(Xsub), cov = cov(Xsub)))
+  mcd  <- covMcd(Xsub, alpha = 0.997)
+  d_ro <- sqrt(mahalanobis(Xsub, center = mcd$center, cov = mcd$cov))
+  tibble(classical = d_cl, robust = d_ro, class = cls, row_idx = idx)
+}) %>%
+  get_outlier_flags(cutoff_bands_extreme)
+
+dd_ci_extreme <- map_dfr(class_order, function(cls) {
+  idx  <- which(df_ci$class == cls)
+  Xsub <- X_ci[idx, ]
+  d_cl <- sqrt(mahalanobis(Xsub, center = colMeans(Xsub), cov = cov(Xsub)))
+  mcd  <- covMcd(Xsub, alpha = 0.997)
+  d_ro <- sqrt(mahalanobis(Xsub, center = mcd$center, cov = mcd$cov))
+  tibble(classical = d_cl, robust = d_ro, class = cls, row_idx = idx)
+}) %>%
+  get_outlier_flags(cutoff_ci_extreme)
+
+cat(sprintf("[Bands extreme] Outliers (true + masked): %d / %d (%.1f%%)\n",
+            sum(dd_bands_extreme$outlier), nrow(dd_bands_extreme),
+            100 * mean(dd_bands_extreme$outlier)))
+cat(sprintf("[CI extreme]    Outliers (true + masked): %d / %d (%.1f%%)\n",
+            sum(dd_ci_extreme$outlier), nrow(dd_ci_extreme),
+            100 * mean(dd_ci_extreme$outlier)))
+
+bands_flags_extreme <- dd_bands_extreme %>%
+  select(row_idx, outlier_type, outlier,
+         d_classical = classical, d_robust = robust) %>%
+  arrange(row_idx)
+
+ci_flags_extreme <- dd_ci_extreme %>%
+  select(row_idx, outlier_type, outlier,
+         d_classical = classical, d_robust = robust) %>%
+  arrange(row_idx)
+
+df_bands_no_out_extreme <- df %>%
+  mutate(row_idx = row_number()) %>%
+  left_join(bands_flags_extreme, by = "row_idx") %>%
+  select(-row_idx) %>%
+  filter(!outlier)
+
+df_ci_no_out_extreme <- df_ci %>%
+  mutate(row_idx = row_number()) %>%
+  left_join(ci_flags_extreme, by = "row_idx") %>%
+  select(-row_idx) %>%
+  filter(!outlier)
+
+cat(sprintf("Extreme-only (99.7%%) — Bands n: %d  |  CI n: %d\n",
+            nrow(df_bands_no_out_extreme), nrow(df_ci_no_out_extreme)))
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — PCA
@@ -465,12 +618,12 @@ make_scree <- function(var_df, title, color) {
   
   ggplot(var_df, aes(x = pc)) +
     geom_col(aes(y = variance), fill = color, alpha = 0.75, width = 0.5) +
-    geom_text(aes(y = variance - max_eig * 0.05, label = round(variance, 2)),
+    geom_text(aes(y = variance + max_eig * 0.07, label = round(variance, 2)),
               size = 2.6, vjust = 0, color = "grey30") +
     geom_hline(yintercept = 1, linetype = "dashed",
                linewidth = 0.5, color = "#B2182B") +
     annotate("text", x = n_pc + 0.45, y = 1,
-             label = "Kaiser Criterion", hjust = 1, vjust = -0.3,
+             label = "Kaiser", hjust = 1, vjust = -0.3,
              size = 2.4, color = "#B2182B") +
     geom_line(aes(y = cumulative * scale_r),
               color = "grey50", linewidth = 0.6, linetype = "dotted") +
@@ -499,39 +652,49 @@ make_scree <- function(var_df, title, color) {
     )
 }
 
-# ── 3a. PCA — raw photometric bands ──────────────────────────────────────────
-pca_bands_full  <- run_pca(df,             photo_cols)
-var_bands_full  <- pca_variance(pca_bands_full)
-pca_bands_clean <- run_pca(df_bands_no_out, photo_cols)
-var_bands_clean <- pca_variance(pca_bands_clean)
+# ── 3a. PCA — raw photometric bands (3 versions) ─────────────────────────────
+pca_bands_full    <- run_pca(df,                     photo_cols)
+pca_bands_clean   <- run_pca(df_bands_no_out,        photo_cols)
+pca_bands_extreme <- run_pca(df_bands_no_out_extreme, photo_cols)
 
-p_scree_bands_full  <- make_scree(var_bands_full,
-                                  paste0("Raw bands — full (n=", nrow(df), ")"),
-                                  class_colors["GALAXY"])
-p_scree_bands_clean <- make_scree(var_bands_clean,
-                                  paste0("Raw bands — outliers removed (n=",
-                                         nrow(df_bands_no_out), ")"),
-                                  class_colors["GALAXY"])
+var_bands_full    <- pca_variance(pca_bands_full)
+var_bands_clean   <- pca_variance(pca_bands_clean)
+var_bands_extreme <- pca_variance(pca_bands_extreme)
 
-# ── 3b. PCA — adjacent color indices ─────────────────────────────────────────
-pca_ci_full  <- run_pca(df_ci,        ci_cols)
-var_ci_full  <- pca_variance(pca_ci_full)
-pca_ci_clean <- run_pca(df_ci_no_out, ci_cols)
-var_ci_clean <- pca_variance(pca_ci_clean)
+p_scree_bands_full    <- make_scree(var_bands_full,
+                                    paste0("Raw bands — full (n=", nrow(df), ")"),
+                                    class_colors["GALAXY"])
+p_scree_bands_clean   <- make_scree(var_bands_clean,
+                                    paste0("Raw bands — 95% MCD (n=", nrow(df_bands_no_out), ")"),
+                                    class_colors["GALAXY"])
+p_scree_bands_extreme <- make_scree(var_bands_extreme,
+                                    paste0("Raw bands — 99.7% MCD (n=", nrow(df_bands_no_out_extreme), ")"),
+                                    class_colors["GALAXY"])
 
-p_scree_ci_full  <- make_scree(var_ci_full,
-                               paste0("Color indices — full (n=", nrow(df_ci), ")"),
-                               class_colors["QSO"])
-p_scree_ci_clean <- make_scree(var_ci_clean,
-                               paste0("Color indices — outliers removed (n=",
-                                      nrow(df_ci_no_out), ")"),
-                               class_colors["QSO"])
+# ── 3b. PCA — adjacent color indices (3 versions) ────────────────────────────
+pca_ci_full    <- run_pca(df_ci,              ci_cols)
+pca_ci_clean   <- run_pca(df_ci_no_out,       ci_cols)
+pca_ci_extreme <- run_pca(df_ci_no_out_extreme, ci_cols)
 
-# ── 3c. Combined scree plot (2x2) ────────────────────────────────────────────
-(p_scree_bands_full | p_scree_bands_clean) /
-  (p_scree_ci_full  | p_scree_ci_clean) +
+var_ci_full    <- pca_variance(pca_ci_full)
+var_ci_clean   <- pca_variance(pca_ci_clean)
+var_ci_extreme <- pca_variance(pca_ci_extreme)
+
+p_scree_ci_full    <- make_scree(var_ci_full,
+                                 paste0("Color indices — full (n=", nrow(df_ci), ")"),
+                                 class_colors["QSO"])
+p_scree_ci_clean   <- make_scree(var_ci_clean,
+                                 paste0("Color indices — 95% MCD (n=", nrow(df_ci_no_out), ")"),
+                                 class_colors["QSO"])
+p_scree_ci_extreme <- make_scree(var_ci_extreme,
+                                 paste0("Color indices — 99.7% MCD (n=", nrow(df_ci_no_out_extreme), ")"),
+                                 class_colors["QSO"])
+
+# ── 3c. Combined scree plots (2x3) ───────────────────────────────────────────
+(p_scree_bands_full | p_scree_bands_clean | p_scree_bands_extreme) /
+  (p_scree_ci_full  | p_scree_ci_clean   | p_scree_ci_extreme) +
   plot_annotation(
-    title   = "Scree plots: PCA on raw bands and color indices",
+    title   = "Scree plots: PCA across outlier removal strategies",
     caption = paste0("Bars = individual variance explained  |  ",
                      "Dashed line = cumulative  |  ",
                      "Data centered and scaled (z-score) before PCA"),
@@ -540,19 +703,25 @@ p_scree_ci_clean <- make_scree(var_ci_clean,
   )
 
 # ── 3d. Print variance tables ────────────────────────────────────────────────
-cat("\n--- PCA variance explained: raw bands ---\n")
-cat("Full dataset:\n")
-print(var_bands_full  %>% mutate(across(prop:cumulative, ~ round(., 3))))
-cat("Outliers removed:\n")
-print(var_bands_clean %>% mutate(across(prop:cumulative, ~ round(., 3))))
+for (lbl in c("Raw bands — full", "Raw bands — 95% MCD", "Raw bands — 99.7% MCD")) {
+  obj <- switch(lbl,
+                "Raw bands — full"      = var_bands_full,
+                "Raw bands — 95% MCD"   = var_bands_clean,
+                "Raw bands — 99.7% MCD" = var_bands_extreme)
+  cat(sprintf("\n--- PCA variance: %s ---\n", lbl))
+  print(obj %>% mutate(across(prop:cumulative, ~ round(., 3))))
+}
 
-cat("\n--- PCA variance explained: color indices ---\n")
-cat("Full dataset:\n")
-print(var_ci_full  %>% mutate(across(prop:cumulative, ~ round(., 3))))
-cat("Outliers removed:\n")
-print(var_ci_clean %>% mutate(across(prop:cumulative, ~ round(., 3))))
+for (lbl in c("Color indices — full", "Color indices — 95% MCD", "Color indices — 99.7% MCD")) {
+  obj <- switch(lbl,
+                "Color indices — full"      = var_ci_full,
+                "Color indices — 95% MCD"   = var_ci_clean,
+                "Color indices — 99.7% MCD" = var_ci_extreme)
+  cat(sprintf("\n--- PCA variance: %s ---\n", lbl))
+  print(obj %>% mutate(across(prop:cumulative, ~ round(., 3))))
+}
 
-# ── 3e. Score biplots — PC1 vs PC2 ───────────────────────────────────────────
+# ── 3e. Score biplots ─────────────────────────────────────────────────────────
 make_biplot <- function(pca_obj, class_vec, var_df, title) {
   scores <- as_tibble(pca_obj$x[, 1:2]) %>% mutate(class = class_vec)
   loads  <- as_tibble(pca_obj$rotation[, 1:2]) %>%
@@ -576,7 +745,8 @@ make_biplot <- function(pca_obj, class_vec, var_df, title) {
     geom_point(
       data = scores %>% group_by(class) %>%
         summarise(PC1 = mean(PC1), PC2 = mean(PC2), .groups = "drop"),
-      aes(x = PC1, y = PC2, color = class), size = 3.5, shape = 18
+      aes(x = PC1, y = PC2, color = class),
+      size = 5, shape = 21, fill = "white", stroke = 2
     ) +
     geom_segment(data = loads,
                  aes(x = 0, y = 0, xend = PC1s, yend = PC2s),
@@ -585,11 +755,11 @@ make_biplot <- function(pca_obj, class_vec, var_df, title) {
     geom_text(data = loads,
               aes(x = PC1s * 1.12, y = PC2s * 1.12, label = variable),
               size = 2.8, color = "grey20", fontface = "bold") +
-    scale_color_manual(values = class_colors) +
-    labs(x = xlab, y = ylab, title = title, color = NULL) +
+    scale_color_manual(values = class_colors, name = "Midpoint") +
+    labs(x = xlab, y = ylab, title = title, color = "Midpoint") +
     theme_minimal(base_size = 10) +
     theme(
-      legend.position  = "top",
+      legend.position  = "right",
       legend.key.size  = unit(0.4, "cm"),
       legend.text      = element_text(size = 8),
       panel.grid.minor = element_blank(),
@@ -599,31 +769,37 @@ make_biplot <- function(pca_obj, class_vec, var_df, title) {
     )
 }
 
-p_bi_bands_full  <- make_biplot(pca_bands_full,    df$class,
-                                var_bands_full,
-                                paste0("Raw bands — full (n=", nrow(df), ")"))
-p_bi_bands_clean <- make_biplot(pca_bands_clean,   df_bands_no_out$class,
-                                var_bands_clean,
-                                paste0("Raw bands — outliers removed (n=",
-                                       nrow(df_bands_no_out), ")"))
-p_bi_ci_full     <- make_biplot(pca_ci_full,       df_ci$class,
-                                var_ci_full,
-                                paste0("Color indices — full (n=", nrow(df_ci), ")"))
-p_bi_ci_clean    <- make_biplot(pca_ci_clean,      df_ci_no_out$class,
-                                var_ci_clean,
-                                paste0("Color indices — outliers removed (n=",
-                                       nrow(df_ci_no_out), ")"))
+# Raw bands — all three versions
+p_bi_bands_full    <- make_biplot(pca_bands_full,    df$class,
+                                  var_bands_full,
+                                  paste0("Raw bands — full (n=", nrow(df), ")"))
+p_bi_bands_clean   <- make_biplot(pca_bands_clean,   df_bands_no_out$class,
+                                  var_bands_clean,
+                                  paste0("Raw bands — 95% MCD (n=", nrow(df_bands_no_out), ")"))
+p_bi_bands_extreme <- make_biplot(pca_bands_extreme, df_bands_no_out_extreme$class,
+                                  var_bands_extreme,
+                                  paste0("Raw bands — 99.7% MCD (n=", nrow(df_bands_no_out_extreme), ")"))
 
-# ── 3f. Combined biplot (2x2) — coloured by class ────────────────────────────
-(p_bi_bands_full | p_bi_bands_clean) /
-  (p_bi_ci_full  | p_bi_ci_clean) +
+# Color indices — all three versions
+p_bi_ci_full    <- make_biplot(pca_ci_full,    df_ci$class,
+                               var_ci_full,
+                               paste0("Color indices — full (n=", nrow(df_ci), ")"))
+p_bi_ci_clean   <- make_biplot(pca_ci_clean,   df_ci_no_out$class,
+                               var_ci_clean,
+                               paste0("Color indices — 95% MCD (n=", nrow(df_ci_no_out), ")"))
+p_bi_ci_extreme <- make_biplot(pca_ci_extreme, df_ci_no_out_extreme$class,
+                               var_ci_extreme,
+                               paste0("Color indices — 99.7% MCD (n=", nrow(df_ci_no_out_extreme), ")"))
+
+# ── 3f. Combined biplots (2x3) ────────────────────────────────────────────────
+(p_bi_bands_full | p_bi_bands_clean | p_bi_bands_extreme) /
+  (p_bi_ci_full  | p_bi_ci_clean   | p_bi_ci_extreme) +
   plot_layout(guides = "collect") +
-  theme(legend.position = "top") +
+  theme(legend.position = "right") +
   plot_annotation(
     title   = "PCA score biplots: PC1 vs PC2 by class",
     caption = paste0("Points = individual observations (max 2,000 per class shown)  |  ",
-                     "Diamond = class centroid  |  ",
-                     "Arrows = variable loadings (scaled)"),
+                     "Circle = class centroid  |  Arrows = variable loadings (scaled)"),
     theme   = theme(plot.title   = element_text(size = 12),
                     plot.caption = element_text(size = 7.5, colour = "grey50"))
   )
@@ -631,52 +807,27 @@ p_bi_ci_clean    <- make_biplot(pca_ci_clean,      df_ci_no_out$class,
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — ASSUMPTION TESTING FOR FA
 # ═══════════════════════════════════════════════════════════════════════════════
-# install.packages(c("MVN", "psych")) if not yet installed
-# library(MVN)
-library(psych)
 
-# ── 4a. Mardia's test — MVN check ────────────────────────────────────────────
-# Mardia's skewness is O(n^2) — subsample to 1000 obs to keep it tractable.
-# set.seed(437)
-# N_MARDIA <- 1000
-# 
-# cat("\n--- Raw bands: full dataset ---\n")
-# mvn(as.matrix(df[sample(nrow(df), N_MARDIA), photo_cols]),
-#     mvnTest = "mardia", desc = FALSE)
-# 
-# cat("\n--- Raw bands: outliers removed ---\n")
-# mvn(as.matrix(df_bands_no_out[sample(nrow(df_bands_no_out), N_MARDIA), photo_cols]),
-#     mvnTest = "mardia", desc = FALSE)
-# 
-# cat("\n--- Color indices: full dataset ---\n")
-# mvn(as.matrix(df_ci[sample(nrow(df_ci), N_MARDIA), ci_cols]),
-#     mvnTest = "mardia", desc = FALSE)
-# 
-# cat("\n--- Color indices: outliers removed ---\n")
-# mvn(as.matrix(df_ci_no_out[sample(nrow(df_ci_no_out), N_MARDIA), ci_cols]),
-#     mvnTest = "mardia", desc = FALSE)
-
-# ── 4b. KMO — factorability check ────────────────────────────────────────────
-# KMO measures sampling adequacy for FA. Values >= 0.80 are "meritorious",
-# >= 0.90 are "marvelous". Low per-variable MSA flags variables that share
-# little common variance with others and may not belong in a factor model.
-
+# ── 4a. KMO — factorability check ────────────────────────────────────────────
 cat("\n--- KMO: Raw bands — full ---\n")
 KMO(cor(df[, photo_cols]))
 
-cat("\n--- KMO: Raw bands — outliers removed ---\n")
+cat("\n--- KMO: Raw bands — 95% MCD ---\n")
 KMO(cor(df_bands_no_out[, photo_cols]))
+
+cat("\n--- KMO: Raw bands — 99.7% MCD ---\n")
+KMO(cor(df_bands_no_out_extreme[, photo_cols]))
 
 cat("\n--- KMO: Color indices — full ---\n")
 KMO(cor(df_ci[, ci_cols]))
 
-cat("\n--- KMO: Color indices — outliers removed ---\n")
+cat("\n--- KMO: Color indices — 95% MCD ---\n")
 KMO(cor(df_ci_no_out[, ci_cols]))
 
-# ── 4c. Negentropy — effect size of non-Gaussianity per variable ─────────────
-# Not inflated by large n — complements Mardia's test.
-# Approximation: Hyvarinen (1998): J(x) ~ [E{G(x)} - E{G(v)}]^2, G(u) = log(cosh(u))
+cat("\n--- KMO: Color indices — 99.7% MCD ---\n")
+KMO(cor(df_ci_no_out_extreme[, ci_cols]))
 
+# ── 4b. Negentropy ───────────────────────────────────────────────────────────
 set.seed(437)
 v   <- rnorm(100000)
 EGv <- mean(log(cosh(v)))
@@ -692,34 +843,22 @@ negentropy_vars <- function(data, cols, label) {
 }
 
 neg_results <- bind_rows(
-  negentropy_vars(df,              photo_cols, "Raw bands — full"),
-  negentropy_vars(df_bands_no_out, photo_cols, "Raw bands — outliers removed"),
-  negentropy_vars(df_ci,           ci_cols,    "Color indices — full"),
-  negentropy_vars(df_ci_no_out,    ci_cols,    "Color indices — outliers removed")
+  negentropy_vars(df,                     photo_cols, "Raw bands — full"),
+  negentropy_vars(df_bands_no_out,        photo_cols, "Raw bands — 95% MCD"),
+  negentropy_vars(df_bands_no_out_extreme, photo_cols, "Raw bands — 99.7% MCD"),
+  negentropy_vars(df_ci,                  ci_cols,    "Color indices — full"),
+  negentropy_vars(df_ci_no_out,           ci_cols,    "Color indices — 95% MCD"),
+  negentropy_vars(df_ci_no_out_extreme,   ci_cols,    "Color indices — 99.7% MCD")
 )
 
-cat("\n--- Negentropy per variable (0 = Gaussian, higher = more non-Gaussian) ---\n")
+cat("\n--- Negentropy per variable ---\n")
 print(neg_results %>% pivot_wider(names_from = variable, values_from = negentropy),
-      n = Inf)
-
-neg_class <- bind_rows(
-  negentropy_vars(filter(df_bands_no_out, class == "GALAXY"), photo_cols, "Raw bands — GALAXY"),
-  negentropy_vars(filter(df_bands_no_out, class == "STAR"),   photo_cols, "Raw bands — STAR"),
-  negentropy_vars(filter(df_bands_no_out, class == "QSO"),    photo_cols, "Raw bands — QSO"),
-  negentropy_vars(filter(df_ci_no_out,    class == "GALAXY"), ci_cols,    "Color indices — GALAXY"),
-  negentropy_vars(filter(df_ci_no_out,    class == "STAR"),   ci_cols,    "Color indices — STAR"),
-  negentropy_vars(filter(df_ci_no_out,    class == "QSO"),    ci_cols,    "Color indices — QSO")
-)
-
-cat("\n--- Negentropy per variable by class ---\n")
-print(neg_class %>% pivot_wider(names_from = variable, values_from = negentropy),
       n = Inf)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 5 — FACTOR ANALYSIS (ML, 2 factors)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# ── Helper: FA scree plot with parallel analysis ──────────────────────────────
 make_fa_scree <- function(data, cols, title, color, n_sim = 500) {
   X      <- scale(as.matrix(data[, cols]))
   n      <- nrow(X)
@@ -727,80 +866,73 @@ make_fa_scree <- function(data, cols, title, color, n_sim = 500) {
   R      <- cor(X)
   eigval <- eigen(R)$values
   
-  # Parallel analysis: simulate random correlation matrices n_sim times
   set.seed(437)
   sim_eigvals <- replicate(n_sim, {
     Xr <- matrix(rnorm(n * p), nrow = n, ncol = p)
     eigen(cor(Xr))$values
   })
-  # 95th percentile of simulated eigenvalues per factor (conservative criterion)
-  pa_95 <- apply(sim_eigvals, 1, quantile, probs = 0.95)
-  # Mean of simulated eigenvalues
+  pa_95   <- apply(sim_eigvals, 1, quantile, probs = 0.95)
   pa_mean <- rowMeans(sim_eigvals)
   
-  var_df <- tibble(
-    factor   = seq_len(p),
-    observed = eigval,
-    pa_95    = pa_95,
-    pa_mean  = pa_mean
-  )
+  var_df <- tibble(factor = seq_len(p), observed = eigval,
+                   pa_95 = pa_95, pa_mean = pa_mean)
+  
+  n_kaiser <- sum(eigval > 1)
+  n_pa     <- sum(eigval > pa_95)
   
   ggplot(var_df, aes(x = factor)) +
-    # Parallel analysis 95th percentile line
-    geom_line(aes(y = pa_95), color = "grey55", linewidth = 0.6,
-              linetype = "longdash") +
+    geom_line(aes(y = pa_95), color = "grey55", linewidth = 0.6, linetype = "longdash") +
     geom_point(aes(y = pa_95), color = "grey55", size = 1.8, shape = 1) +
-    # Observed eigenvalue line
     geom_line(aes(y = observed), color = color, linewidth = 0.7) +
     geom_point(aes(y = observed), color = color, size = 2.5) +
-    # Kaiser criterion
-    geom_hline(yintercept = 1, linetype = "dashed",
-               linewidth = 0.5, color = "#B2182B") +
-    annotate("text", x = p, y = 1,
-             label = "Kaiser Criterion", hjust = 1, vjust = -0.4,
+    geom_hline(yintercept = 1, linetype = "dashed", linewidth = 0.5, color = "#B2182B") +
+    annotate("text", x = p, y = 1, label = "Kaiser", hjust = 1, vjust = -0.4,
              size = 2.3, color = "#B2182B") +
-    scale_x_continuous(breaks = seq_len(p),
-                       labels = paste0("F", seq_len(p))) +
+    annotate("text", x = 1, y = max(eigval) * 0.97,
+             label = paste0("Kaiser: ", n_kaiser, "  |  PA: ", n_pa),
+             hjust = 0, vjust = 1, size = 2.4, color = "grey40") +
+    scale_x_continuous(breaks = seq_len(p), labels = paste0("F", seq_len(p))) +
     labs(x = NULL, y = "Eigenvalue", title = title) +
     theme_minimal(base_size = 10) +
-    theme(
-      panel.grid.minor   = element_blank(),
-      panel.grid.major.x = element_blank(),
-      axis.text          = element_text(size = 8, colour = "grey50"),
-      plot.title         = element_text(size = 9, face = "plain")
-    )
+    theme(panel.grid.minor   = element_blank(),
+          panel.grid.major.x = element_blank(),
+          axis.text          = element_text(size = 8, colour = "grey50"),
+          plot.title         = element_text(size = 9, face = "plain"))
 }
 
-# ── 5a. FA scree plots — all four combinations ───────────────────────────────
-p_fa_scree_bands_full  <- make_fa_scree(df,              photo_cols,
-                                        paste0("Raw bands — full (n=", nrow(df), ")"),
-                                        class_colors["GALAXY"])
-p_fa_scree_bands_clean <- make_fa_scree(df_bands_no_out, photo_cols,
-                                        paste0("Raw bands — outliers removed (n=", nrow(df_bands_no_out), ")"),
-                                        class_colors["GALAXY"])
-p_fa_scree_ci_full     <- make_fa_scree(df_ci,           ci_cols,
-                                        paste0("Color indices — full (n=", nrow(df_ci), ")"),
-                                        class_colors["QSO"])
-p_fa_scree_ci_clean    <- make_fa_scree(df_ci_no_out,    ci_cols,
-                                        paste0("Color indices — outliers removed (n=", nrow(df_ci_no_out), ")"),
-                                        class_colors["QSO"])
+# ── 5a. FA scree plots — all six combinations ────────────────────────────────
+p_fa_scree_bands_full    <- make_fa_scree(df,                     photo_cols,
+                                          paste0("Raw bands — full (n=", nrow(df), ")"),
+                                          class_colors["GALAXY"])
+p_fa_scree_bands_clean   <- make_fa_scree(df_bands_no_out,        photo_cols,
+                                          paste0("Raw bands — 95% MCD (n=", nrow(df_bands_no_out), ")"),
+                                          class_colors["GALAXY"])
+p_fa_scree_bands_extreme <- make_fa_scree(df_bands_no_out_extreme, photo_cols,
+                                          paste0("Raw bands — 99.7% MCD (n=", nrow(df_bands_no_out_extreme), ")"),
+                                          class_colors["GALAXY"])
+p_fa_scree_ci_full       <- make_fa_scree(df_ci,              ci_cols,
+                                          paste0("Color indices — full (n=", nrow(df_ci), ")"),
+                                          class_colors["QSO"])
+p_fa_scree_ci_clean      <- make_fa_scree(df_ci_no_out,       ci_cols,
+                                          paste0("Color indices — 95% MCD (n=", nrow(df_ci_no_out), ")"),
+                                          class_colors["QSO"])
+p_fa_scree_ci_extreme    <- make_fa_scree(df_ci_no_out_extreme, ci_cols,
+                                          paste0("Color indices — 99.7% MCD (n=", nrow(df_ci_no_out_extreme), ")"),
+                                          class_colors["QSO"])
 
-(p_fa_scree_bands_full | p_fa_scree_bands_clean) /
-  (p_fa_scree_ci_full  | p_fa_scree_ci_clean) +
+(p_fa_scree_bands_full | p_fa_scree_bands_clean | p_fa_scree_bands_extreme) /
+  (p_fa_scree_ci_full  | p_fa_scree_ci_clean   | p_fa_scree_ci_extreme) +
   plot_annotation(
     title   = "FA scree plots with parallel analysis",
-    caption = paste0("Solid line = observed eigenvalues  |  ",
-                     "Dashed line = parallel analysis 95th percentile (n=500 simulations)  |  ",
-                     "Red dashed = Kaiser criterion (eigenvalue > 1)"),
+    caption = paste0("Solid = observed  |  Dashed = PA 95th percentile (500 sims)  |  Red = Kaiser"),
     theme   = theme(plot.title   = element_text(size = 12),
                     plot.caption = element_text(size = 7.5, colour = "grey50"))
   )
 
-# ── Helper: run FA for all three rotations and extract loadings ───────────────
+# ── Helper: FA loadings for all three rotations ───────────────────────────────
 run_fa_loadings <- function(data, cols, n_factors, dataset_label) {
   X <- scale(as.matrix(data[, cols]))
-  
-  rotations <- c("none", "varimax", "promax")
+  rotations  <- c("none", "varimax", "promax")
   rot_labels <- c("No Rotation", "Varimax", "Promax")
   
   map2_dfr(rotations, rot_labels, function(rot, rot_lab) {
@@ -809,99 +941,220 @@ run_fa_loadings <- function(data, cols, n_factors, dataset_label) {
     loads$variable <- rownames(loads)
     loads %>%
       pivot_longer(-variable, names_to = "factor", values_to = "loading") %>%
-      mutate(
-        rotation = rot_lab,
-        dataset  = dataset_label,
-        factor   = recode(factor, MR1 = "ML1", MR2 = "ML2")
-      )
+      mutate(rotation = rot_lab, dataset = dataset_label,
+             factor   = recode(factor, MR1 = "ML1", MR2 = "ML2"))
   })
 }
 
 N_FACTORS <- 2
 
-fa_bands_full  <- run_fa_loadings(df,              photo_cols, N_FACTORS, "Raw bands — full")
-fa_bands_clean <- run_fa_loadings(df_bands_no_out, photo_cols, N_FACTORS, "Raw bands — outliers removed")
-fa_ci_full     <- run_fa_loadings(df_ci,           ci_cols,    N_FACTORS, "Color indices — full")
-fa_ci_clean    <- run_fa_loadings(df_ci_no_out,    ci_cols,    N_FACTORS, "Color indices — outliers removed")
+fa_bands_full    <- run_fa_loadings(df,                     photo_cols, N_FACTORS, "Raw bands — full")
+fa_bands_clean   <- run_fa_loadings(df_bands_no_out,        photo_cols, N_FACTORS, "Raw bands — 95% MCD")
+fa_bands_extreme <- run_fa_loadings(df_bands_no_out_extreme, photo_cols, N_FACTORS, "Raw bands — 99.7% MCD")
+fa_ci_full       <- run_fa_loadings(df_ci,              ci_cols, N_FACTORS, "Color indices — full")
+fa_ci_clean      <- run_fa_loadings(df_ci_no_out,       ci_cols, N_FACTORS, "Color indices — 95% MCD")
+fa_ci_extreme    <- run_fa_loadings(df_ci_no_out_extreme, ci_cols, N_FACTORS, "Color indices — 99.7% MCD")
 
-# ── Helper: loading heatmap like the reference image ─────────────────────────
+# ── Helper: loading heatmap ───────────────────────────────────────────────────
 make_fa_heatmap <- function(fa_df, title) {
   fa_df <- fa_df %>%
-    mutate(
-      rotation = factor(rotation, levels = c("No Rotation", "Varimax", "Promax")),
-      variable = factor(variable, levels = rev(unique(variable)))
-    )
+    mutate(rotation = factor(rotation, levels = c("No Rotation", "Varimax", "Promax")),
+           variable = factor(variable, levels = rev(unique(variable))))
   
   ggplot(fa_df, aes(x = factor, y = variable, fill = loading)) +
     geom_tile(color = "white", linewidth = 0.5) +
     geom_text(aes(label = sprintf("%.2f", loading),
                   color = abs(loading) > 0.5),
               size = 2.8, fontface = "plain") +
-    scale_fill_gradient2(
-      low      = "#2166AC",
-      mid      = "#F7F7F7",
-      high     = "#B2182B",
-      midpoint = 0,
-      limits   = c(-1, 1),
-      name     = "Loading"
-    ) +
-    scale_color_manual(values = c(`TRUE` = "white", `FALSE` = "grey30"),
-                       guide  = "none") +
+    scale_fill_gradient2(low = "#2166AC", mid = "#F7F7F7", high = "#B2182B",
+                         midpoint = 0, limits = c(-1, 1), name = "Loading") +
+    scale_color_manual(values = c(`TRUE` = "white", `FALSE` = "grey30"), guide = "none") +
     facet_wrap(~ rotation, nrow = 1) +
     labs(x = NULL, y = NULL, title = title) +
     theme_minimal(base_size = 10) +
-    theme(
-      strip.text       = element_text(size = 9, face = "plain"),
-      panel.grid       = element_blank(),
-      axis.text.x      = element_text(size = 8, colour = "grey40"),
-      axis.text.y      = element_text(size = 8, colour = "grey40"),
-      legend.key.height = unit(0.6, "cm"),
-      legend.key.width  = unit(0.3, "cm"),
-      legend.text       = element_text(size = 7),
-      legend.title      = element_text(size = 8),
-      plot.title        = element_text(size = 9, face = "plain")
-    )
+    theme(strip.text        = element_text(size = 9, face = "plain"),
+          panel.grid        = element_blank(),
+          axis.text.x       = element_text(size = 8, colour = "grey40"),
+          axis.text.y       = element_text(size = 8, colour = "grey40"),
+          legend.key.height = unit(0.6, "cm"),
+          legend.key.width  = unit(0.3, "cm"),
+          legend.text       = element_text(size = 7),
+          legend.title      = element_text(size = 8),
+          plot.title        = element_text(size = 9, face = "plain"))
 }
 
-# ── 5b. Loading heatmaps — all four combinations ─────────────────────────────
-p_fa_bands_full  <- make_fa_heatmap(fa_bands_full,  "Raw bands — full")
-p_fa_bands_clean <- make_fa_heatmap(fa_bands_clean, "Raw bands — outliers removed")
-p_fa_ci_full     <- make_fa_heatmap(fa_ci_full,     "Color indices — full")
-p_fa_ci_clean    <- make_fa_heatmap(fa_ci_clean,    "Color indices — outliers removed")
+# ── 5b. Loading heatmaps — all six combinations ───────────────────────────────
+make_fa_heatmap(fa_bands_full,    "Raw bands — full")
+make_fa_heatmap(fa_bands_clean,   "Raw bands — 95% MCD")
+make_fa_heatmap(fa_bands_extreme, "Raw bands — 99.7% MCD")
+make_fa_heatmap(fa_ci_full,       "Color indices — full")
+make_fa_heatmap(fa_ci_clean,      "Color indices — 95% MCD")
+make_fa_heatmap(fa_ci_extreme,    "Color indices — 99.7% MCD")
 
-p_fa_bands_full
-p_fa_bands_clean
-p_fa_ci_full
-p_fa_ci_clean
-
-# ── 5c. Print uniquenesses and communalities for each combination ─────────────
-print_uniquenesses <- function(data, cols, label) {
-  X      <- scale(as.matrix(data[, cols]))
-  fa_obj <- fa(X, nfactors = N_FACTORS, rotate = "varimax", fm = "ml")
+# ── 5c. Communalities, uniquenesses, and factor correlation ──────────────────
+print_fa_diagnostics <- function(data, cols, label) {
+  X          <- scale(as.matrix(data[, cols]))
+  fa_varimax <- fa(X, nfactors = N_FACTORS, rotate = "varimax", fm = "ml")
+  fa_promax  <- fa(X, nfactors = N_FACTORS, rotate = "promax",  fm = "ml")
+  
   result <- tibble(
     variable    = cols,
-    communality = round(fa_obj$communality, 3),
-    uniqueness  = round(fa_obj$uniquenesses, 3)
+    communality = round(fa_varimax$communality, 3),
+    uniqueness  = round(fa_varimax$uniquenesses, 3)
   )
   cat(sprintf("\n--- Communalities & Uniquenesses: %s ---\n", label))
   print(result, n = Inf)
+  
+  # Factor correlation from promax (Phi matrix)
+  if (!is.null(fa_promax$Phi)) {
+    cat(sprintf("Promax factor correlation (Phi): %.3f\n",
+                fa_promax$Phi[1, 2]))
+  }
 }
 
-print_uniquenesses(df,              photo_cols, "Raw bands — full")
-print_uniquenesses(df_bands_no_out, photo_cols, "Raw bands — outliers removed")
-print_uniquenesses(df_ci,           ci_cols,    "Color indices — full")
-print_uniquenesses(df_ci_no_out,    ci_cols,    "Color indices — outliers removed")
+print_fa_diagnostics(df,                     photo_cols, "Raw bands — full")
+print_fa_diagnostics(df_bands_no_out,        photo_cols, "Raw bands — 95% MCD")
+print_fa_diagnostics(df_bands_no_out_extreme, photo_cols, "Raw bands — 99.7% MCD")
+print_fa_diagnostics(df_ci,                  ci_cols,    "Color indices — full")
+print_fa_diagnostics(df_ci_no_out,           ci_cols,    "Color indices — 95% MCD")
+print_fa_diagnostics(df_ci_no_out_extreme,   ci_cols,    "Color indices — 99.7% MCD")
 
+# ── 5d. FA score biplots — varimax and promax ─────────────────────────────────
+make_fa_biplot <- function(data, cols, class_vec, n_factors, title,
+                           rotation = "varimax") {
+  X      <- scale(as.matrix(data[, cols]))
+  fa_obj <- fa(X, nfactors = n_factors, rotate = rotation, fm = "ml",
+               scores = "regression")
+  
+  scores <- as_tibble(fa_obj$scores) %>%
+    setNames(paste0("F", seq_len(n_factors))) %>%
+    mutate(class = class_vec)
+  
+  # For promax use pattern matrix loadings; for varimax standard loadings
+  load_mat <- if (rotation == "promax" && !is.null(fa_obj$Structure)) {
+    as.data.frame(fa_obj$Structure[, 1:2])
+  } else {
+    as.data.frame(unclass(fa_obj$loadings)[, 1:2])
+  }
+  
+  loads <- load_mat %>%
+    setNames(c("F1", "F2")) %>%
+    mutate(variable = cols)
+  
+  score_range <- max(abs(c(scores$F1, scores$F2)))
+  load_scale  <- score_range * 0.45 / max(abs(c(loads$F1, loads$F2)))
+  loads <- loads %>% mutate(F1s = F1 * load_scale, F2s = F2 * load_scale)
+  
+  var_exp <- fa_obj$Vaccounted
+  xlab <- paste0("F1 (", round(var_exp["Proportion Var", 1] * 100, 1), "%)")
+  ylab <- paste0("F2 (", round(var_exp["Proportion Var", 2] * 100, 1), "%)")
+  
+  ggplot() +
+    geom_hline(yintercept = 0, linewidth = 0.3, color = "grey80") +
+    geom_vline(xintercept = 0, linewidth = 0.3, color = "grey80") +
+    geom_point(
+      data = scores %>% group_by(class) %>%
+        slice_sample(n = 2000, replace = FALSE) %>% ungroup(),
+      aes(x = F1, y = F2, color = class), alpha = 0.25, size = 0.7
+    ) +
+    geom_point(
+      data = scores %>% group_by(class) %>%
+        summarise(F1 = mean(F1), F2 = mean(F2), .groups = "drop"),
+      aes(x = F1, y = F2, color = class),
+      size = 5, shape = 21, fill = "white", stroke = 2
+    ) +
+    geom_segment(data = loads,
+                 aes(x = 0, y = 0, xend = F1s, yend = F2s),
+                 arrow = arrow(length = unit(0.15, "cm"), type = "closed"),
+                 linewidth = 0.6, color = "grey20") +
+    geom_text(data = loads,
+              aes(x = F1s * 1.12, y = F2s * 1.12, label = variable),
+              size = 2.8, color = "grey20", fontface = "bold") +
+    scale_color_manual(values = class_colors, name = "Midpoint") +
+    labs(x = xlab, y = ylab, title = title, color = "Midpoint") +
+    theme_minimal(base_size = 10) +
+    theme(
+      legend.position  = "right",
+      legend.key.size  = unit(0.4, "cm"),
+      legend.text      = element_text(size = 8),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(color = "grey93"),
+      axis.text        = element_text(size = 8, colour = "grey50"),
+      plot.title       = element_text(size = 9, face = "plain")
+    )
+}
+
+# ── Varimax biplots — all six combinations ───────────────────────────────────
+p_fa_bi_bands_full_vm    <- make_fa_biplot(df,                      photo_cols, df$class,
+                                           N_FACTORS, paste0("Raw bands — full (n=", nrow(df), ")"),
+                                           rotation = "varimax")
+p_fa_bi_bands_clean_vm   <- make_fa_biplot(df_bands_no_out,         photo_cols, df_bands_no_out$class,
+                                           N_FACTORS, paste0("Raw bands — 95% MCD (n=", nrow(df_bands_no_out), ")"),
+                                           rotation = "varimax")
+p_fa_bi_bands_extreme_vm <- make_fa_biplot(df_bands_no_out_extreme,  photo_cols, df_bands_no_out_extreme$class,
+                                           N_FACTORS, paste0("Raw bands — 99.7% MCD (n=", nrow(df_bands_no_out_extreme), ")"),
+                                           rotation = "varimax")
+p_fa_bi_ci_full_vm    <- make_fa_biplot(df_ci,               ci_cols, df_ci$class,
+                                        N_FACTORS, paste0("Color indices — full (n=", nrow(df_ci), ")"),
+                                        rotation = "varimax")
+p_fa_bi_ci_clean_vm   <- make_fa_biplot(df_ci_no_out,        ci_cols, df_ci_no_out$class,
+                                        N_FACTORS, paste0("Color indices — 95% MCD (n=", nrow(df_ci_no_out), ")"),
+                                        rotation = "varimax")
+p_fa_bi_ci_extreme_vm <- make_fa_biplot(df_ci_no_out_extreme,  ci_cols, df_ci_no_out_extreme$class,
+                                        N_FACTORS, paste0("Color indices — 99.7% MCD (n=", nrow(df_ci_no_out_extreme), ")"),
+                                        rotation = "varimax")
+
+# ── Promax biplots — all six combinations ────────────────────────────────────
+p_fa_bi_bands_full_pm    <- make_fa_biplot(df,                      photo_cols, df$class,
+                                           N_FACTORS, paste0("Raw bands — full (n=", nrow(df), ")"),
+                                           rotation = "promax")
+p_fa_bi_bands_clean_pm   <- make_fa_biplot(df_bands_no_out,         photo_cols, df_bands_no_out$class,
+                                           N_FACTORS, paste0("Raw bands — 95% MCD (n=", nrow(df_bands_no_out), ")"),
+                                           rotation = "promax")
+p_fa_bi_bands_extreme_pm <- make_fa_biplot(df_bands_no_out_extreme,  photo_cols, df_bands_no_out_extreme$class,
+                                           N_FACTORS, paste0("Raw bands — 99.7% MCD (n=", nrow(df_bands_no_out_extreme), ")"),
+                                           rotation = "promax")
+p_fa_bi_ci_full_pm    <- make_fa_biplot(df_ci,               ci_cols, df_ci$class,
+                                        N_FACTORS, paste0("Color indices — full (n=", nrow(df_ci), ")"),
+                                        rotation = "promax")
+p_fa_bi_ci_clean_pm   <- make_fa_biplot(df_ci_no_out,        ci_cols, df_ci_no_out$class,
+                                        N_FACTORS, paste0("Color indices — 95% MCD (n=", nrow(df_ci_no_out), ")"),
+                                        rotation = "promax")
+p_fa_bi_ci_extreme_pm <- make_fa_biplot(df_ci_no_out_extreme,  ci_cols, df_ci_no_out_extreme$class,
+                                        N_FACTORS, paste0("Color indices — 99.7% MCD (n=", nrow(df_ci_no_out_extreme), ")"),
+                                        rotation = "promax")
+
+# ── 5e. Combined FA biplots — varimax (2x3) ───────────────────────────────────
+(p_fa_bi_bands_full_vm | p_fa_bi_bands_clean_vm | p_fa_bi_bands_extreme_vm) /
+  (p_fa_bi_ci_full_vm  | p_fa_bi_ci_clean_vm   | p_fa_bi_ci_extreme_vm) +
+  plot_layout(guides = "collect") +
+  theme(legend.position = "right") +
+  plot_annotation(
+    title   = "FA score biplots: F1 vs F2 by class (varimax rotation)",
+    caption = paste0("Points = individual observations (max 2,000 per class shown)  |  ",
+                     "Circle = class centroid  |  Arrows = structure matrix loadings (scaled)"),
+    theme   = theme(plot.title   = element_text(size = 12),
+                    plot.caption = element_text(size = 7.5, colour = "grey50"))
+  )
+
+# ── 5f. Combined FA biplots — promax (2x3) ────────────────────────────────────
+(p_fa_bi_bands_full_pm | p_fa_bi_bands_clean_pm | p_fa_bi_bands_extreme_pm) /
+  (p_fa_bi_ci_full_pm  | p_fa_bi_ci_clean_pm   | p_fa_bi_ci_extreme_pm) +
+  plot_layout(guides = "collect") +
+  theme(legend.position = "right") +
+  plot_annotation(
+    title   = "FA score biplots: F1 vs F2 by class (promax rotation)",
+    caption = paste0("Points = individual observations (max 2,000 per class shown)  |  ",
+                     "Circle = class centroid  |  Arrows = structure matrix loadings (scaled)"),
+    theme   = theme(plot.title   = element_text(size = 12),
+                    plot.caption = element_text(size = 7.5, colour = "grey50"))
+  )
 # ═══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — LDA & LOGISTIC REGRESSION WITH CROSS-VALIDATION
-# ═══════════════════════════════════════════════════════════════════════════════
-# install.packages("nnet") if not yet installed — for multinomial logistic regression
 library(nnet)
 
 set.seed(437)
 K_FOLDS <- 10
 
-# ── Helper: stratified k-fold indices ────────────────────────────────────────
 make_folds_stratified <- function(y, k) {
   folds <- vector("list", k)
   for (cls in unique(y)) {
@@ -913,7 +1166,6 @@ make_folds_stratified <- function(y, k) {
   folds
 }
 
-# ── Helper: unstratified k-fold indices ──────────────────────────────────────
 make_folds_unstratified <- function(y, k) {
   n      <- length(y)
   idx    <- sample(seq_len(n))
@@ -921,7 +1173,6 @@ make_folds_unstratified <- function(y, k) {
   map(seq_len(k), ~ idx[splits == .x])
 }
 
-# ── Helper: run CV for LDA or logistic and return per-fold metrics ────────────
 run_cv <- function(data, cols, y_col, k, method, dataset_label,
                    stratified = TRUE) {
   df_model <- data %>%
@@ -936,7 +1187,6 @@ run_cv <- function(data, cols, y_col, k, method, dataset_label,
   fold_results <- map(seq_len(k), function(i) {
     test_idx  <- folds[[i]]
     train_idx <- setdiff(seq_len(nrow(df_model)), test_idx)
-    
     train <- df_model[train_idx, ]
     test  <- df_model[test_idx,  ]
     
@@ -951,21 +1201,16 @@ run_cv <- function(data, cols, y_col, k, method, dataset_label,
       preds <- predict(fit, newdata = test)
     }
     
-    # Overall accuracy
     acc <- mean(preds == test[[y_col]])
     
-    # Per-class recall
     per_class <- map_dfr(classes, function(cls) {
       truth <- test[[y_col]] == cls
       pred  <- preds == cls
-      tibble(
-        class     = cls,
-        recall    = ifelse(sum(truth) > 0, sum(truth & pred) / sum(truth), NA_real_),
-        precision = ifelse(sum(pred)  > 0, sum(truth & pred) / sum(pred),  NA_real_)
-      )
+      tibble(class     = cls,
+             recall    = ifelse(sum(truth) > 0, sum(truth & pred) / sum(truth), NA_real_),
+             precision = ifelse(sum(pred)  > 0, sum(truth & pred) / sum(pred),  NA_real_))
     })
     
-    # Confusion matrix counts for this fold
     cm <- as_tibble(table(truth = test[[y_col]], predicted = preds)) %>%
       mutate(fold = i, method = method, dataset = dataset_label)
     
@@ -980,18 +1225,18 @@ run_cv <- function(data, cols, y_col, k, method, dataset_label,
     )
   })
   
-  list(
-    metrics = map_dfr(fold_results, "metrics"),
-    cm      = map_dfr(fold_results, "cm")
-  )
+  list(metrics = map_dfr(fold_results, "metrics"),
+       cm      = map_dfr(fold_results, "cm"))
 }
 
-# ── 6a. Run CV — stratified and unstratified ─────────────────────────────────
+# ── 6a. Run CV — six datasets × two methods × stratified/unstratified ─────────
 cv_datasets <- list(
-  list(data = df,              cols = photo_cols, label = "Raw bands — full"),
-  list(data = df_bands_no_out, cols = photo_cols, label = "Raw bands — outliers removed"),
-  list(data = df_ci,           cols = ci_cols,    label = "Color indices — full"),
-  list(data = df_ci_no_out,    cols = ci_cols,    label = "Color indices — outliers removed")
+  list(data = df,                     cols = photo_cols, label = "Raw bands — full"),
+  list(data = df_bands_no_out,        cols = photo_cols, label = "Raw bands — 95% MCD"),
+  list(data = df_bands_no_out_extreme, cols = photo_cols, label = "Raw bands — 99.7% MCD"),
+  list(data = df_ci,                  cols = ci_cols,    label = "Color indices — full"),
+  list(data = df_ci_no_out,           cols = ci_cols,    label = "Color indices — 95% MCD"),
+  list(data = df_ci_no_out_extreme,   cols = ci_cols,    label = "Color indices — 99.7% MCD")
 )
 
 run_all_cv <- function(stratified) {
@@ -1022,21 +1267,16 @@ res_unstrat <- extract_results(cv_raw_unstrat, "Unstratified")
 cv_results <- bind_rows(res_strat$metrics, res_unstrat$metrics)
 cv_cm_all  <- bind_rows(res_strat$cm,      res_unstrat$cm)
 
-# ── 6b. Summarise CV metrics ──────────────────────────────────────────────────
+# ── 6b. Summarise ─────────────────────────────────────────────────────────────
 cv_summary <- cv_results %>%
   group_by(method, dataset, sampling) %>%
-  summarise(
-    mean_acc = mean(accuracy),
-    sd_acc   = sd(accuracy),
-    across(starts_with("recall_"),    ~ mean(.x, na.rm = TRUE), .names = "mean_{.col}"),
-    across(starts_with("precision_"), ~ mean(.x, na.rm = TRUE), .names = "mean_{.col}"),
-    .groups = "drop"
-  ) %>%
-  mutate(
-    method   = recode(method, lda = "LDA", logistic = "Logistic"),
-    dataset  = factor(dataset, levels = map_chr(cv_datasets, "label")),
-    sampling = factor(sampling, levels = c("Stratified", "Unstratified"))
-  )
+  summarise(mean_acc = mean(accuracy), sd_acc = sd(accuracy),
+            across(starts_with("recall_"),    ~ mean(.x, na.rm = TRUE), .names = "mean_{.col}"),
+            across(starts_with("precision_"), ~ mean(.x, na.rm = TRUE), .names = "mean_{.col}"),
+            .groups = "drop") %>%
+  mutate(method   = recode(method, lda = "LDA", logistic = "Logistic"),
+         dataset  = factor(dataset, levels = map_chr(cv_datasets, "label")),
+         sampling = factor(sampling, levels = c("Stratified", "Unstratified")))
 
 cat("\n--- CV accuracy summary ---\n")
 cv_summary %>%
@@ -1045,7 +1285,7 @@ cv_summary %>%
   arrange(dataset, method, sampling) %>%
   print(n = Inf)
 
-# ── 6c. Bar chart comparing accuracy — stratified vs unstratified ─────────────
+# ── 6c. Accuracy bar chart ────────────────────────────────────────────────────
 method_colors <- c(LDA = "#378ADD", Logistic = "#D85A30")
 
 p_acc <- ggplot(cv_summary,
@@ -1061,33 +1301,25 @@ p_acc <- ggplot(cv_summary,
   scale_fill_manual(values = method_colors) +
   scale_y_continuous(labels = scales::percent_format(accuracy = 1),
                      limits = c(0, 1.08), expand = c(0, 0)) +
-  scale_x_discrete(labels = function(x) str_wrap(x, width = 16)) +
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 14)) +
   facet_wrap(~ sampling, ncol = 1) +
-  labs(
-    x       = NULL,
-    y       = "Mean accuracy (10-fold CV)",
-    fill    = NULL,
-    title   = "LDA vs. logistic: CV accuracy — stratified vs. unstratified folds",
-    caption = paste0("Error bars = ±1 SD across folds  |  ",
-                     "Features standardized before fitting  |  ",
-                     "Stratified folds preserve class imbalance (50% / 42% / 8%)")
-  ) +
+  labs(x = NULL, y = "Mean accuracy (10-fold CV)", fill = NULL,
+       title   = "LDA vs. logistic: CV accuracy across outlier removal strategies",
+       caption = paste0("Error bars = ±1 SD  |  Features standardized  |  ",
+                        "Stratified folds preserve class imbalance (50%/42%/8%)")) +
   theme_minimal(base_size = 10) +
-  theme(
-    legend.position    = "top",
-    strip.text         = element_text(size = 9, face = "plain"),
-    panel.grid.minor   = element_blank(),
-    panel.grid.major.x = element_blank(),
-    axis.text.x        = element_text(size = 8, colour = "grey40"),
-    axis.text.y        = element_text(size = 8, colour = "grey50"),
-    plot.caption       = element_text(size = 7.5, colour = "grey50"),
-    plot.title         = element_text(size = 11)
-  )
+  theme(legend.position    = "top",
+        strip.text         = element_text(size = 9, face = "plain"),
+        panel.grid.minor   = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.text.x        = element_text(size = 7, colour = "grey40"),
+        axis.text.y        = element_text(size = 8, colour = "grey50"),
+        plot.caption       = element_text(size = 7.5, colour = "grey50"),
+        plot.title         = element_text(size = 11))
 
 p_acc
 
-# ── 6d. Confusion matrices — averaged across folds ───────────────────────────
-# Normalise by true class (row) so cells show recall per class pair
+# ── 6d. Confusion matrices ────────────────────────────────────────────────────
 make_cm_plots <- function(method_label, sampling_label = "Stratified") {
   cm_data <- cv_cm_all %>%
     filter(method == tolower(method_label),
@@ -1106,72 +1338,27 @@ make_cm_plots <- function(method_label, sampling_label = "Stratified") {
   
   ggplot(cm_data, aes(x = predicted, y = truth, fill = pct)) +
     geom_tile(color = "white", linewidth = 0.8) +
-    geom_text(aes(label = label,
-                  color = pct > 0.55),
+    geom_text(aes(label = label, color = pct > 0.55),
               size = 2.5, lineheight = 1.2) +
     scale_fill_gradient2(low = "#F7F7F7", mid = "#7FBCD2", high = "#2166AC",
-                         midpoint = 0.5, limits = c(0, 1),
-                         name = "Recall") +
+                         midpoint = 0.5, limits = c(0, 1), name = "Recall") +
     scale_color_manual(values = c(`TRUE` = "white", `FALSE` = "grey30"),
                        guide = "none") +
-    facet_wrap(~ dataset, ncol = 2,
-               labeller = labeller(dataset = function(x) str_wrap(x, 22))) +
-    labs(
-      x     = "Predicted class",
-      y     = "True class",
-      title = paste0("Confusion matrices: ", method_label,
-                     " — ", sampling_label,
-                     " (10-fold CV, normalised by true class)")
-    ) +
+    facet_wrap(~ dataset, ncol = 3,
+               labeller = labeller(dataset = function(x) str_wrap(x, 20))) +
+    labs(x = "Predicted class", y = "True class",
+         title = paste0("Confusion matrices: ", method_label,
+                        " — ", sampling_label,
+                        " (10-fold CV, normalised by true class)")) +
     theme_minimal(base_size = 10) +
-    theme(
-      strip.text    = element_text(size = 8),
-      panel.grid    = element_blank(),
-      axis.text     = element_text(size = 8, colour = "grey40"),
-      legend.key.height = unit(0.6, "cm"),
-      plot.title    = element_text(size = 11)
-    )
+    theme(strip.text        = element_text(size = 7),
+          panel.grid        = element_blank(),
+          axis.text         = element_text(size = 8, colour = "grey40"),
+          legend.key.height = unit(0.6, "cm"),
+          plot.title        = element_text(size = 11))
 }
 
-# Stratified confusion matrices
 make_cm_plots("lda",      "Stratified")
 make_cm_plots("logistic", "Stratified")
-
-# Unstratified confusion matrices
 make_cm_plots("lda",      "Unstratified")
 make_cm_plots("logistic", "Unstratified")
-
-# ── AIC/BIC factor selection ──────────────────────────────────────────────────
-fa_ic <- function(data, cols, label, max_factors = 4) {
-  X <- scale(as.matrix(data[, cols]))
-  n <- nrow(X)
-  
-  map_dfr(seq_len(max_factors), function(nf) {
-    fit <- tryCatch(
-      fa(X, nfactors = nf, rotate = "none", fm = "ml"),
-      error = function(e) NULL
-    )
-    if (is.null(fit)) return(NULL)
-    
-    # psych stores objective (minimised -2*loglik / n), recover loglik
-    # BIC and SABIC are available directly in fit
-    tibble(
-      dataset    = label,
-      n_factors  = nf,
-      BIC        = fit$BIC,
-      SABIC      = fit$SABIC,   # sample-size adjusted BIC — most useful here
-      RMSEA      = fit$RMSEA[1],
-      TLI        = fit$TLI
-    )
-  })
-}
-
-ic_results <- bind_rows(
-  fa_ic(df,              photo_cols, "Raw bands — full"),
-  fa_ic(df_bands_no_out, photo_cols, "Raw bands — outliers removed"),
-  fa_ic(df_ci,           ci_cols,    "Color indices — full"),
-  fa_ic(df_ci_no_out,    ci_cols,    "Color indices — outliers removed")
-)
-
-cat("\n--- FA information criteria ---\n")
-print(ic_results, n = Inf)
