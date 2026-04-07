@@ -3,7 +3,7 @@ library(ggcorrplot)
 library(patchwork)
 library(tidyverse)
 library(robustbase)
-#library(MVN)
+library(MVN)
 library(psych)
 library(cowplot)
 library(nnet)
@@ -282,7 +282,7 @@ p_bands_hist_labelled <- ggdraw() +
 p_bands_combined <- plot_grid(p_legend_combined, p_bands_hist_labelled, p_bands_corr,
                               nrow = 1, rel_widths = c(0.2, 0.42, 0.58),
                               align = "h", axis = "tb")
-plot_grid(p_bands_combined, ncol = 1)
+plot_grid(p_bands_combined, ncol = 1)  # Figure: raw dists
 
 # ── D-D plots: raw bands ──────────────────────────────────────────────────────
 p_bands      <- ncol(X_bands)
@@ -333,13 +333,14 @@ p_dd_bands_within_b <- ggdraw() +
 
 blank <- ggplot() + theme_void()
 
-plot_grid(
+plot_grid(                                                           # Figure: dd (raw bands)
   plot_grid(blank, p_dd_bands_pooled_labelled, blank,
             nrow = 1, rel_widths = c(1, 1, 1)),
   plot_grid(p_dd_bands_within_b, p_dd_bands_within[[2]], p_dd_bands_within[[3]],
             nrow = 1),
   ncol = 1
 )
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 2 — ADJACENT COLOR INDICES (u-g, g-r, r-i, i-z) #####
@@ -388,7 +389,8 @@ p_ci_corr <- (p_ci_all | p_ci_gal) / (p_ci_star | p_ci_qso) +
                   theme = theme(plot.title = element_text(size = 11, face = "bold", hjust = 0)))
 
 plot_grid(plot_grid(p_legend_combined, p_ci_hist, p_ci_corr, nrow = 1,
-                    rel_widths = c(0.2, 0.42, 0.58), align = "h", axis = "tb"), ncol = 1)
+                    rel_widths = c(0.2, 0.42, 0.58), align = "h", axis = "tb"), ncol = 1)  # Figure: adj dists
+
 
 # ── D-D plots: color indices ──────────────────────────────────────────────────
 p_ci      <- ncol(X_ci)
@@ -435,13 +437,14 @@ p_dd_ci_within_b <- ggdraw() +
   draw_label("B", x = 0.01, y = 0.99, hjust = 0, vjust = 1,
              fontface = "bold", size = 11)
 
-plot_grid(
+plot_grid(                                                           # Figure: dd (color indices)
   plot_grid(blank, p_dd_ci_pooled_labelled, blank,
             nrow = 1, rel_widths = c(1, 1, 1)),
   plot_grid(p_dd_ci_within_b, p_dd_ci_within[[2]], p_dd_ci_within[[3]],
             nrow = 1),
   ncol = 1
 )
+
 
 # ── Outlier summaries ─────────────────────────────────────────────────────────
 cat("\n--- Pooled outlier summary ---\n")
@@ -615,23 +618,10 @@ p_scree_ci_5sd   <- make_scree(var_ci_5sd,   paste0("Color indices — 5SD (n=",
 p_scree_grid <- (p_scree_bands_full | p_scree_bands_5sd) /
   (p_scree_ci_full  | p_scree_ci_5sd)
 
-# ── 3d. Print variance tables ────────────────────────────────────────────────
-for (i in seq_along(list(var_bands_full, var_bands_clean, var_bands_5sd))) {
-  lbl <- c("Raw bands — full", "Raw bands — 2SD/95%", "Raw bands — 5SD")[i]
-  cat(sprintf("\n--- PCA variance: %s ---\n", lbl))
-  print(list(var_bands_full, var_bands_clean, var_bands_5sd)[[i]] %>%
-          mutate(across(prop:cumulative, ~ round(., 3))))
-}
-for (i in seq_along(list(var_ci_full, var_ci_clean, var_ci_5sd))) {
-  lbl <- c("Color indices — full", "Color indices — 2SD/95%", "Color indices — 5SD")[i]
-  cat(sprintf("\n--- PCA variance: %s ---\n", lbl))
-  print(list(var_ci_full, var_ci_clean, var_ci_5sd)[[i]] %>%
-          mutate(across(prop:cumulative, ~ round(., 3))))
-}
 
 # ── 3e. Score biplots ─────────────────────────────────────────────────────────
 make_biplot <- function(pca_obj, class_vec, var_df, title,
-                        circle = NULL) {
+                        circle = NULL, pc1_name = NULL, pc2_name = NULL) {
   # circle = list(cx, cy, rx, ry) for an ellipse, or list(cx, cy, r) for a circle
   scores <- as_tibble(pca_obj$x[, 1:2]) %>% mutate(class = class_vec)
   loads  <- as_tibble(pca_obj$rotation[, 1:2]) %>%
@@ -639,8 +629,12 @@ make_biplot <- function(pca_obj, class_vec, var_df, title,
   score_range <- max(abs(c(scores$PC1, scores$PC2)))
   load_scale  <- score_range * 0.45 / max(abs(c(loads$PC1, loads$PC2)))
   loads <- loads %>% mutate(PC1s = PC1 * load_scale, PC2s = PC2 * load_scale)
-  xlab <- paste0("PC1 (", round(var_df$prop[1] * 100, 1), "%)")
-  ylab <- paste0("PC2 (", round(var_df$prop[2] * 100, 1), "%)")
+  xlab <- if (!is.null(pc1_name))
+    paste0("PC1 — ", pc1_name, " (", round(var_df$prop[1] * 100, 1), "%)")
+  else paste0("PC1 (", round(var_df$prop[1] * 100, 1), "%)")
+  ylab <- if (!is.null(pc2_name))
+    paste0("PC2 — ", pc2_name, " (", round(var_df$prop[2] * 100, 1), "%)")
+  else paste0("PC2 (", round(var_df$prop[2] * 100, 1), "%)")
   p <- ggplot() +
     geom_hline(yintercept = 0, linewidth = 0.3, color = "grey80") +
     geom_vline(xintercept = 0, linewidth = 0.3, color = "grey80") +
@@ -677,13 +671,16 @@ make_biplot <- function(pca_obj, class_vec, var_df, title,
 
 p_bi_bands_full  <- make_biplot(pca_bands_full,  df$class,               var_bands_full,  paste0("Raw bands — full (n=",   nrow(df), ")"))
 p_bi_bands_clean <- make_biplot(pca_bands_clean, df_bands_no_out$class,  var_bands_clean, paste0("Raw bands — 2SD/95% (n=", nrow(df_bands_no_out), ")"))
-p_bi_bands_5sd   <- make_biplot(pca_bands_5sd,   df_bands_no_out_5sd$class, var_bands_5sd, paste0("Raw bands — 5SD (n=",    nrow(df_bands_no_out_5sd), ")"))
+p_bi_bands_5sd   <- make_biplot(pca_bands_5sd,   df_bands_no_out_5sd$class, var_bands_5sd,
+                                paste0("Raw bands — 5SD (n=", nrow(df_bands_no_out_5sd), ")"),
+                                pc1_name = "Distance/Brightness", pc2_name = "UV Excess")
 
 p_bi_ci_full  <- make_biplot(pca_ci_full,  df_ci$class,            var_ci_full,  paste0("Color indices — full (n=",   nrow(df_ci), ")"))
 p_bi_ci_clean <- make_biplot(pca_ci_clean, df_ci_no_out$class,     var_ci_clean, paste0("Color indices — 2SD/95% (n=", nrow(df_ci_no_out), ")"))
 p_bi_ci_5sd   <- make_biplot(pca_ci_5sd,   df_ci_no_out_5sd$class, var_ci_5sd,
                              paste0("Color indices — 5SD (n=", nrow(df_ci_no_out_5sd), ")"),
-                             circle = list(cx = 5.5, cy = 0.5, rx = 1.8, ry = 1.2))
+                             circle = list(cx = 5.5, cy = 0.5, rx = 1.8, ry = 1.2),
+                             pc1_name = "Redness", pc2_name = "UV Excess")
 
 # ── 3f. Combined biplots (2x2: full and 5SD only) ────────────────────────────
 p_biplot_grid <- (p_bi_bands_full | p_bi_bands_5sd) /
@@ -797,6 +794,20 @@ neg_results <- bind_rows(
 )
 cat("\n--- Negentropy per variable ---\n")
 print(neg_results %>% pivot_wider(names_from = variable, values_from = negentropy), n = Inf)
+
+# ── Mardia's test of multivariate normality ───────────────────────────────────
+run_mardia <- function(data, cols, label) {
+  cat(sprintf("\n--- Mardia's test: %s ---\n", label))
+  result <- mvn(data[, cols], mvnTest = "mardia")
+  print(result$multivariateNormality)
+}
+
+run_mardia(df,                  photo_cols, "Raw bands — full")
+run_mardia(df_bands_no_out,     photo_cols, "Raw bands — 2SD/95%")
+run_mardia(df_bands_no_out_5sd, photo_cols, "Raw bands — 5SD")
+run_mardia(df_ci,               ci_cols,    "Color indices — full")
+run_mardia(df_ci_no_out,        ci_cols,    "Color indices — 2SD/95%")
+run_mardia(df_ci_no_out_5sd,    ci_cols,    "Color indices — 5SD")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SECTION 5 — FACTOR ANALYSIS (ML, 2 factors) #####
@@ -922,13 +933,6 @@ make_fa_heatmap <- function(fa_df, title) {
           plot.title = element_text(size = 8, face = "plain"))
 }
 
-# ── 5b. Loading heatmaps (2x3) ───────────────────────────────────────────────
-make_fa_heatmap(fa_bands_full,  "Raw bands — full")
-make_fa_heatmap(fa_bands_clean, "Raw bands — 2SD/95%")
-make_fa_heatmap(fa_bands_5sd,   "Raw bands — 5SD")
-make_fa_heatmap(fa_ci_full,     "Color indices — full")
-make_fa_heatmap(fa_ci_clean,    "Color indices — 2SD/95%")
-make_fa_heatmap(fa_ci_5sd,      "Color indices — 5SD")
 
 # ── 5c. Communalities, uniquenesses, Phi ─────────────────────────────────────
 print_fa_diagnostics <- function(data, cols, label) {
@@ -944,16 +948,11 @@ print_fa_diagnostics <- function(data, cols, label) {
     cat(sprintf("Promax factor correlation (Phi): %.3f\n", fa_promax$Phi[1, 2]))
 }
 
-print_fa_diagnostics(df,                  photo_cols, "Raw bands — full")
-print_fa_diagnostics(df_bands_no_out,     photo_cols, "Raw bands — 2SD/95%")
-print_fa_diagnostics(df_bands_no_out_5sd, photo_cols, "Raw bands — 5SD")
-print_fa_diagnostics(df_ci,               ci_cols,    "Color indices — full")
-print_fa_diagnostics(df_ci_no_out,        ci_cols,    "Color indices — 2SD/95%")
-print_fa_diagnostics(df_ci_no_out_5sd,    ci_cols,    "Color indices — 5SD")
 
 # ── 5d. FA score biplots ──────────────────────────────────────────────────────
 make_fa_biplot <- function(data, cols, class_vec, n_factors, title,
-                           rotation = "varimax", circle = NULL) {
+                           rotation = "varimax", circle = NULL,
+                           f1_name = NULL, f2_name = NULL) {
   X      <- scale(as.matrix(data[, cols]))
   fa_obj <- fa(X, nfactors = n_factors, rotate = rotation, fm = "ml", scores = "regression")
   scores <- as_tibble(fa_obj$scores) %>% setNames(paste0("F", seq_len(n_factors))) %>%
@@ -966,8 +965,12 @@ make_fa_biplot <- function(data, cols, class_vec, n_factors, title,
   load_scale  <- score_range * 0.45 / max(abs(c(loads$F1, loads$F2)))
   loads <- loads %>% mutate(F1s = F1 * load_scale, F2s = F2 * load_scale)
   var_exp <- fa_obj$Vaccounted
-  xlab <- paste0("F1 (", round(var_exp["Proportion Var", 1] * 100, 1), "%)")
-  ylab <- paste0("F2 (", round(var_exp["Proportion Var", 2] * 100, 1), "%)")
+  xlab <- if (!is.null(f1_name))
+    paste0("F1 — ", f1_name, " (", round(var_exp["Proportion Var", 1] * 100, 1), "%)")
+  else paste0("F1 (", round(var_exp["Proportion Var", 1] * 100, 1), "%)")
+  ylab <- if (!is.null(f2_name))
+    paste0("F2 — ", f2_name, " (", round(var_exp["Proportion Var", 2] * 100, 1), "%)")
+  else paste0("F2 (", round(var_exp["Proportion Var", 2] * 100, 1), "%)")
   p <- ggplot() +
     geom_hline(yintercept = 0, linewidth = 0.3, color = "grey80") +
     geom_vline(xintercept = 0, linewidth = 0.3, color = "grey80") +
@@ -1005,11 +1008,13 @@ make_fa_biplot <- function(data, cols, class_vec, n_factors, title,
 # Varimax biplots
 p_fa_bi_bands_full_vm  <- make_fa_biplot(df,                  photo_cols, df$class,               N_FACTORS, paste0("Raw bands — full (n=",   nrow(df), ")"),               "varimax")
 p_fa_bi_bands_clean_vm <- make_fa_biplot(df_bands_no_out,     photo_cols, df_bands_no_out$class,  N_FACTORS, paste0("Raw bands — 2SD/95% (n=", nrow(df_bands_no_out), ")"), "varimax")
-p_fa_bi_bands_5sd_vm   <- make_fa_biplot(df_bands_no_out_5sd, photo_cols, df_bands_no_out_5sd$class, N_FACTORS, paste0("Raw bands — 5SD (n=",    nrow(df_bands_no_out_5sd), ")"), "varimax")
+p_fa_bi_bands_5sd_vm   <- make_fa_biplot(df_bands_no_out_5sd, photo_cols, df_bands_no_out_5sd$class, N_FACTORS, paste0("Raw bands — 5SD (n=",    nrow(df_bands_no_out_5sd), ")"), "varimax",
+                                         f1_name = "Redness", f2_name = "Distance/Brightness")
 p_fa_bi_ci_full_vm     <- make_fa_biplot(df_ci,               ci_cols,    df_ci$class,             N_FACTORS, paste0("Color indices — full (n=",   nrow(df_ci), ")"),           "varimax")
 p_fa_bi_ci_clean_vm    <- make_fa_biplot(df_ci_no_out,        ci_cols,    df_ci_no_out$class,      N_FACTORS, paste0("Color indices — 2SD/95% (n=", nrow(df_ci_no_out), ")"),  "varimax")
 p_fa_bi_ci_5sd_vm      <- make_fa_biplot(df_ci_no_out_5sd,    ci_cols,    df_ci_no_out_5sd$class,  N_FACTORS, paste0("Color indices — 5SD (n=",    nrow(df_ci_no_out_5sd), ")"), "varimax",
-                                         circle = list(cx = -2.5, cy = -1.7, rx = 0.8, ry = 1.1))
+                                         circle = list(cx = -2.5, cy = -1.7, rx = 0.8, ry = 1.1),
+                                         f1_name = "Redness", f2_name = "UV Excess")
 
 # Promax biplots
 p_fa_bi_bands_full_pm  <- make_fa_biplot(df,                  photo_cols, df$class,               N_FACTORS, paste0("Raw bands — full (n=",   nrow(df), ")"),               "promax")
@@ -1181,19 +1186,16 @@ cv_summary <- cv_results %>%
          dataset  = factor(dataset, levels = map_chr(cv_datasets, "label")),
          sampling = factor(sampling, levels = c("Stratified", "Unstratified")))
 
-cat("\n--- CV accuracy summary ---\n")
-cv_summary %>%
-  select(sampling, method, dataset, mean_acc, sd_acc) %>%
-  mutate(across(c(mean_acc, sd_acc), ~ round(., 4))) %>%
-  arrange(dataset, method, sampling) %>% print(n = Inf)
 
 # ── 6c. Accuracy bar chart — full & 5SD only, stratified ─────────────────────
 method_colors <- c(LDA = "#378ADD", Logistic = "#D85A30")
 
 acc_label_map <- c(
   "Raw bands — full"        = "Raw bands\nfull",
+  "Raw bands — 2SD/95%"     = "Raw bands\n2SD/95%",
   "Raw bands — 5SD"         = "Raw bands\n5SD",
   "Color indices — full"    = "Color indices\nfull",
+  "Color indices — 2SD/95%" = "Color indices\n2SD/95%",
   "Color indices — 5SD"     = "Color indices\n5SD"
 )
 
@@ -1282,7 +1284,7 @@ p_cm_grid <- (p_cm_lda | p_cm_log) +
   plot_layout(guides = "collect") +
   theme(legend.position = "right")
 
-# ── 6e. Combined A (accuracy) + B (confusion matrices) ───────────────────────
+# ── 6e. Combined: bars (A) left, confusion matrices (B) right ────────────────
 p_acc_labelled <- ggdraw() +
   draw_plot(p_acc_main) +
   draw_label("A", x = 0.01, y = 0.99, hjust = 0, vjust = 1,
@@ -1293,20 +1295,20 @@ p_cm_labelled <- ggdraw() +
   draw_label("B", x = 0.01, y = 0.99, hjust = 0, vjust = 1,
              fontface = "bold", size = 11)
 
-plot_grid(p_acc_labelled, p_cm_labelled, nrow = 1, rel_widths = c(0.4, 1))
+plot_grid(p_acc_labelled, p_cm_labelled, nrow = 1, rel_widths = c(0.5, 1))
 
 # ── 6f. FA score biplot: prediction correctness overlay ──────────────────────
 # Fit logistic on full 5SD datasets to get per-observation predictions
-make_pred_biplot <- function(data, cols, title) {
+make_pred_biplot <- function(data, cols, title, f1_name = NULL, f2_name = NULL) {
   X      <- scale(as.matrix(data[, cols]))
   y      <- data$class
- 
+  
   # FA scores (varimax, 2 factors)
   fa_obj <- fa(X, nfactors = 2, rotate = "varimax", fm = "ml", scores = "regression")
   scores <- as_tibble(fa_obj$scores) %>%
     setNames(c("F1", "F2")) %>%
     mutate(class = y)
- 
+  
   # Logistic regression predictions
   df_model <- as_tibble(X) %>%
     setNames(cols) %>%
@@ -1314,26 +1316,30 @@ make_pred_biplot <- function(data, cols, title) {
   formula  <- as.formula(paste("class ~", paste(paste0("`", cols, "`"), collapse = " + ")))
   fit      <- multinom(formula, data = df_model, trace = FALSE)
   preds    <- predict(fit, newdata = df_model)
- 
+  
   scores <- scores %>%
     mutate(predicted = preds,
            correct   = factor(ifelse(class == predicted, "Correct", "Incorrect"),
                               levels = c("Correct", "Incorrect")),
            predicted = factor(predicted, levels = class_order))
- 
+  
   # Class centroids
   centroids <- scores %>%
     group_by(class) %>%
     summarise(F1 = mean(F1), F2 = mean(F2), .groups = "drop")
- 
+  
   var_exp <- fa_obj$Vaccounted
-  xlab <- paste0("F1 (", round(var_exp["Proportion Var", 1] * 100, 1), "%)")
-  ylab <- paste0("F2 (", round(var_exp["Proportion Var", 2] * 100, 1), "%)")
- 
+  xlab <- if (!is.null(f1_name))
+    paste0("F1 — ", f1_name, " (", round(var_exp["Proportion Var", 1] * 100, 1), "%)")
+  else paste0("F1 (", round(var_exp["Proportion Var", 1] * 100, 1), "%)")
+  ylab <- if (!is.null(f2_name))
+    paste0("F2 — ", f2_name, " (", round(var_exp["Proportion Var", 2] * 100, 1), "%)")
+  else paste0("F2 (", round(var_exp["Proportion Var", 2] * 100, 1), "%)")
+  
   correct_colors  <- c(Correct = "grey60", Incorrect = "#B2182B")
   correct_alphas  <- c(Correct = 0.20,     Incorrect = 0.85)
   pred_shapes     <- c(GALAXY = 16, STAR = 17, QSO = 15)
- 
+  
   ggplot(scores, aes(x = F1, y = F2)) +
     geom_hline(yintercept = 0, linewidth = 0.3, color = "grey85") +
     geom_vline(xintercept = 0, linewidth = 0.3, color = "grey85") +
@@ -1364,7 +1370,7 @@ make_pred_biplot <- function(data, cols, title) {
           axis.text        = element_text(size = 8, colour = "grey50"),
           plot.title       = element_text(size = 9, face = "plain"))
 }
- 
+
 # ── Helper: extract FA scores + logistic predictions without plotting ─────────
 get_pred_scores <- function(data, cols) {
   X      <- scale(as.matrix(data[, cols]))
@@ -1380,9 +1386,9 @@ get_pred_scores <- function(data, cols) {
   scores %>% mutate(predicted = preds,
                     correct   = class == predicted)
 }
- 
+
 pred_ci_5sd <- get_pred_scores(df_ci_no_out_5sd, ci_cols)
- 
+
 # Accuracy inside the circle (cx=-2, cy=-2, r=1)
 circle_mask <- with(pred_ci_5sd, (F1 - (-2))^2 + (F2 - (-2))^2 <= 1^2)
 cat(sprintf("\nAccuracy inside circle: %d / %d (%.1f%%)\n",
@@ -1391,12 +1397,13 @@ cat(sprintf("\nAccuracy inside circle: %d / %d (%.1f%%)\n",
             100 * mean(pred_ci_5sd$correct[circle_mask])))
 cat(sprintf("Class breakdown inside circle:\n"))
 print(table(pred_ci_5sd$class[circle_mask], pred_ci_5sd$predicted[circle_mask]))
- 
+
 p_pred_bands_5sd <- make_pred_biplot(df_bands_no_out_5sd, photo_cols,
-                                     paste0("Raw bands — 5SD (n=", nrow(df_bands_no_out_5sd), ")"))
+                                     paste0("Raw bands — 5SD (n=", nrow(df_bands_no_out_5sd), ")"),
+                                     f1_name = "Redness", f2_name = "Distance/Brightness")
 p_pred_ci_5sd    <- make_pred_biplot(df_ci_no_out_5sd,    ci_cols,
-                                     paste0("Color indices — 5SD (n=", nrow(df_ci_no_out_5sd), ")"))
- 
+                                     paste0("Color indices — 5SD (n=", nrow(df_ci_no_out_5sd), ")"),
+                                     f1_name = "Redness", f2_name = "UV Excess") 
 t <- seq(0, 2 * pi, length.out = 200)
 circle_acc <- round(100 * mean(pred_ci_5sd$correct[circle_mask]), 1)
 p_pred_ci_5sd <- p_pred_ci_5sd +
@@ -1411,9 +1418,3 @@ p_pred_ci_5sd <- p_pred_ci_5sd +
 (p_pred_bands_5sd | p_pred_ci_5sd) +
   plot_layout(guides = "collect") +
   theme(legend.position = "right")
-
-# ── Still available: full confusion matrix outputs ────────────────────────────
-make_cm_plots("lda",      "Stratified")
-make_cm_plots("logistic", "Stratified")
-make_cm_plots("lda",      "Unstratified")
-make_cm_plots("logistic", "Unstratified")
