@@ -796,9 +796,13 @@ cat("\n--- Negentropy per variable ---\n")
 print(neg_results %>% pivot_wider(names_from = variable, values_from = negentropy), n = Inf)
 
 # ── Mardia's test of multivariate normality ───────────────────────────────────
-run_mardia <- function(data, cols, label) {
-  cat(sprintf("\n--- Mardia's test: %s ---\n", label))
-  result <- mvn(data[, cols], mvnTest = "mardia")
+library(MVN)
+
+run_mardia <- function(data, cols, label, n_sample = 1000) {
+  cat(sprintf("\n--- Mardia's test: %s (subsampled n=%d) ---\n", label, n_sample))
+  set.seed(437)
+  idx    <- sample(nrow(data), min(n_sample, nrow(data)))
+  result <- mvn(data[idx, cols], mvnTest = "mardia")
   print(result$multivariateNormality)
 }
 
